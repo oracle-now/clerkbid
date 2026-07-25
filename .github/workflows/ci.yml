@@ -31,10 +31,8 @@ jobs:
         run: npm run typecheck
 
       - name: Test
-        run: npm test
+        run: npm test -- --run
         env:
-          # Tests use vi.mock — no real DB connection needed.
-          # Provide a placeholder so postgres.ts module loads without throwing.
           DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
           NEXTAUTH_SECRET: ci-test-secret-not-real
           NEXTAUTH_URL: http://localhost:3000
