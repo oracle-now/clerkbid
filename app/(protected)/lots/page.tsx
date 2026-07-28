@@ -91,15 +91,15 @@ export default function LotsPage() {
     return (
       <div>
         <Header
-          title="Lots"
-          description="Select an event in the sidebar to manage the catalog."
+          title="Items"
+          description="Select a sale in the sidebar to manage the catalog."
           actions={
             <Link href="/events/" className={linkSecondary}>
-              Events
+              Sales
             </Link>
           }
         />
-        <p className="text-sm text-muted">No event selected.</p>
+        <p className="text-sm text-muted">No sale selected.</p>
       </div>
     );
   }
@@ -107,8 +107,8 @@ export default function LotsPage() {
   return (
     <div>
       <Header
-        title="Lots"
-        description={`Catalog for ${currentEvent.name}. Import lots from CSV or add them when clerking sells.`}
+        title="Items"
+        description={`Catalog for ${currentEvent.name}. Import items from CSV or add them when clerking sells.`}
         actions={
           <>
             <input
@@ -194,12 +194,12 @@ export default function LotsPage() {
                   if (toAdd.length > 0) scheduleCloudPush();
                   const parts: string[] = [];
                   if (toAdd.length)
-                    parts.push(`Imported ${toAdd.length} lot(s).`);
+                    parts.push(`Imported ${toAdd.length} item(s).`);
                   if (issues.length)
                     parts.push(`${issues.length} row issue(s) in file.`);
                   if (conflicts.length)
                     parts.push(
-                      `Skipped ${conflicts.length} lot(s) already in this event.`
+                      `Skipped ${conflicts.length} item(s) already in this sale.`
                     );
                   if (badConsignorRows.length)
                     parts.push(
@@ -234,7 +234,7 @@ export default function LotsPage() {
                     [
                       12,
                       "",
-                      "Example lot description",
+                      "Example item description",
                       "",
                       "",
                       1,
@@ -244,14 +244,14 @@ export default function LotsPage() {
                 )
               }
             >
-              Lot CSV template
+              Item CSV template
             </Button>
             <Button
               type="button"
               variant="secondary"
               onClick={() => csvRef.current?.click()}
             >
-              Import lots (CSV)
+              Import items (CSV)
             </Button>
           </>
         }
@@ -272,10 +272,10 @@ export default function LotsPage() {
       <div className="mb-6 max-w-md">
         <Input
           id="lots-search"
-          label="Search lots"
+          label="Search items"
           value={search}
           onChange={(e) => setSearch(e.target.value)}
-          placeholder="Lot #, description, consignor…"
+          placeholder="Item #, description, consignor…"
         />
       </div>
 
@@ -284,8 +284,8 @@ export default function LotsPage() {
       ) : filtered.length === 0 ? (
         <p className="text-sm text-muted">
           {lots.length === 0
-            ? "No lots yet. Import a CSV or record sales on the Clerking page."
-            : "No lots match your search."}
+            ? "No items yet. Import a CSV or record sales on the Sale clerking page."
+            : "No items match your search."}
         </p>
       ) : (
         <div className="overflow-x-auto rounded-lg border border-navy/10 dark:border-slate-700">
@@ -293,7 +293,7 @@ export default function LotsPage() {
             <thead className="bg-surface dark:bg-slate-800/80">
               <tr>
                 <th className="px-3 py-2 text-left font-semibold text-navy dark:text-slate-200">
-                  Lot #
+                  Item #
                 </th>
                 <th className="px-3 py-2 text-left font-semibold text-navy dark:text-slate-200">
                   Description

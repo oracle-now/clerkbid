@@ -47,7 +47,7 @@ export default function EventsPage() {
       const data = await buildEventExport(db, eventId);
       const safe = slug.replace(/[^a-z0-9-_]+/gi, "-").slice(0, 40);
       downloadJson(`clerkbid-event-${safe || eventId}.json`, data);
-      showToast({ kind: "success", message: "Event exported." });
+      showToast({ kind: "success", message: "Sale exported." });
     } catch (e) {
       showToast({
         kind: "error",
@@ -71,7 +71,7 @@ export default function EventsPage() {
       const summary = await importEventFromPayload(db, payload);
       showToast({
         kind: "success",
-        message: `Imported: ${summary.bidders} bidders, ${summary.consignors} consignors, ${summary.lots} lots, ${summary.sales} sales.`,
+        message: `Imported: ${summary.bidders} buyers, ${summary.consignors} consignors, ${summary.lots} items, ${summary.sales} sales.`,
       });
       await switchEvent(summary.eventId);
       refresh();
@@ -87,8 +87,8 @@ export default function EventsPage() {
   return (
     <div>
       <Header
-        title="Events"
-        description="Create, switch, export, and import auction events. Data stays on this device."
+        title="Sales"
+        description="Create, switch, export, and import sales. Data stays on this device."
         actions={
           <>
             <input
@@ -100,10 +100,10 @@ export default function EventsPage() {
               onChange={onImportFileChange}
             />
             <Button variant="secondary" type="button" onClick={onPickImportFile}>
-              Import event (JSON)
+              Import sale (JSON)
             </Button>
             <Button type="button" onClick={() => { setEditing(null); setFormOpen(true); }}>
-              Create new event
+              Create new sale
             </Button>
           </>
         }
@@ -113,13 +113,13 @@ export default function EventsPage() {
         <p className="text-muted">Loading…</p>
       ) : events.length === 0 ? (
         <div className="rounded-xl border border-dashed border-navy/20 bg-surface/50 p-10 text-center dark:border-slate-600 dark:bg-slate-800/40">
-          <p className="text-muted">No events yet.</p>
+          <p className="text-muted">No sales yet.</p>
           <Button
             className="mt-4"
             type="button"
             onClick={() => { setEditing(null); setFormOpen(true); }}
           >
-            Create your first event
+            Create your first sale
           </Button>
         </div>
       ) : (
@@ -152,16 +152,16 @@ export default function EventsPage() {
         }}
         onSaved={() => {
           refresh();
-          showToast({ kind: "success", message: "Event saved." });
+          showToast({ kind: "success", message: "Sale saved." });
         }}
       />
 
       <ConfirmDialog
         open={deleteTarget != null}
-        title="Delete event"
+        title="Delete sale"
         message={
           deleteTarget
-            ? `Permanently delete “${deleteTarget.name}” and all bidders, lots, sales, and invoices for this event? This cannot be undone.`
+            ? `Permanently delete "${deleteTarget.name}" and all buyers, items, sales, and Buyer Bundles for this sale? This cannot be undone.`
             : ""
         }
         confirmLabel="Delete permanently"
@@ -176,7 +176,7 @@ export default function EventsPage() {
           if (cloudSyncId) {
             void deleteCloudEventBackup(cloudSyncId);
           }
-          showToast({ kind: "success", message: "Event deleted." });
+          showToast({ kind: "success", message: "Sale deleted." });
         }}
       />
     </div>
