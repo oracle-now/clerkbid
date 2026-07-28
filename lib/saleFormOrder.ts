@@ -39,7 +39,7 @@ export const DEFAULT_SALE_FIELD_ORDER: SaleFieldId[] = [
   ...ALL_SALE_FIELD_IDS,
 ];
 
-/** Matches pre-requirements clerking validation defaults. Paddle always required for recording a sale. */
+/** Matches pre-requirements clerking validation defaults. Buyer code always required for recording a sale. */
 export const DEFAULT_SALE_FIELD_REQUIRED: Record<SaleFieldId, boolean> = {
   lot: true,
   price: true,
@@ -52,14 +52,14 @@ export const DEFAULT_SALE_FIELD_REQUIRED: Record<SaleFieldId, boolean> = {
 };
 
 const LABELS: Record<SaleFieldId, string> = {
-  lot: "Lot number",
-  price: "Hammer per unit",
-  paddle: "Paddle number",
+  lot: "Item number",
+  price: "Sale price per unit",
+  paddle: "Buyer code",
   quantity: "Quantity",
-  description: "Lot description / title",
-  notes: "Lot notes / ring",
+  description: "Item description / title",
+  notes: "Item notes / ring",
   consignor: "Consignor",
-  initials: "Clerk initials",
+  initials: "Seller initials",
 };
 
 export function saleFieldLabel(id: SaleFieldId): string {
@@ -114,7 +114,7 @@ export function enforceLotDescriptionInvariant(
   }
 }
 
-/** Paddle is always required to attach a sale to a bidder. */
+/** Buyer code is always required to attach a sale to a buyer. */
 function enforcePaddleRequired(r: Record<SaleFieldId, boolean>): void {
   r.paddle = true;
 }

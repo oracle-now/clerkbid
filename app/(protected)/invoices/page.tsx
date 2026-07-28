@@ -150,7 +150,7 @@ export default function InvoicesPage() {
       const r = await generateAllInvoicesForEvent(db, currentEventId);
       showToast({
         kind: "success",
-        message: `Invoices: ${r.created} created, ${r.updated} updated${r.skippedPaid ? `, ${r.skippedPaid} unchanged (all sales already invoiced)` : ""}.`,
+        message: `Buyer Bundles: ${r.created} created, ${r.updated} updated${r.skippedPaid ? `, ${r.skippedPaid} unchanged (all sales already invoiced)` : ""}.`,
       });
       if (r.created > 0 || r.updated > 0) scheduleCloudPush();
     } catch (e) {
@@ -166,14 +166,14 @@ export default function InvoicesPage() {
     const r = await upsertInvoiceForBidder(db, currentEvent, bidderId);
     if (r.kind === "created" || r.kind === "updated") {
       scheduleCloudPush();
-      showToast({ kind: "success", message: "Invoice created." });
+      showToast({ kind: "success", message: "Buyer Bundle created." });
     } else if (r.kind === "skipped_paid") {
       showToast({
         kind: "info",
-        message: "All of this bidder’s sales are already on invoices.",
+        message: "All of this buyer's sales are already on Buyer Bundles.",
       });
     } else {
-      showToast({ kind: "error", message: "No sales for this bidder." });
+      showToast({ kind: "error", message: "No sales for this buyer." });
     }
   }
 
@@ -192,7 +192,7 @@ export default function InvoicesPage() {
     if (!invoiceRows?.length) return;
     const unpaid = invoiceRows.filter((i) => i.status === "unpaid" && i.id != null);
     if (unpaid.length === 0) {
-      showToast({ kind: "info", message: "No unpaid invoices." });
+      showToast({ kind: "info", message: "No unpaid Buyer Bundles." });
       return;
     }
     if (!db) return;
@@ -211,15 +211,15 @@ export default function InvoicesPage() {
     return (
       <div>
         <Header
-          title="Invoices"
-          description="Select an event to work with invoices."
+          title="Buyer Bundles"
+          description="Select a sale to work with Buyer Bundles."
           actions={
             <Link href="/events/" className={linkSecondary}>
-              Events
+              Sales
             </Link>
           }
         />
-        <p className="text-sm text-muted">No event selected.</p>
+        <p className="text-sm text-muted">No sale selected.</p>
       </div>
     );
   }
@@ -227,7 +227,7 @@ export default function InvoicesPage() {
   return (
     <div>
       <Header
-        title="Invoices"
+        title="Buyer Bundles"
         description={`Generate, print, and record payments for ${currentEvent.name}.`}
         actions={
           <>
@@ -239,7 +239,7 @@ export default function InvoicesPage() {
               Print all unpaid
             </Button>
             <Button type="button" onClick={() => void handleGenerateAll()}>
-              Generate all invoices
+              Generate all Buyer Bundles
             </Button>
           </>
         }
@@ -267,7 +267,7 @@ export default function InvoicesPage() {
       {pendingBidders && pendingBidders.length > 0 ? (
         <div className="mb-8 rounded-xl border border-gold/30 bg-amber-50/40 p-4 dark:border-amber-900/50 dark:bg-amber-950/30">
           <h2 className="text-sm font-semibold text-navy dark:text-amber-100">
-            Bidders with sales not yet on an invoice
+            Buyers with sales not yet on a Buyer Bundle
           </h2>
           <ul className="mt-3 space-y-2">
             {pendingBidders.map((b) => (
@@ -277,7 +277,7 @@ export default function InvoicesPage() {
               >
                 <span>
                   <span className="font-mono font-medium">
-                    Paddle #{b.paddleNumber}
+                    Buyer code: {b.paddleNumber}
                   </span>
                   <span className="ml-2 text-ink dark:text-slate-100">
                     {b.firstName} {b.lastName}
@@ -289,7 +289,7 @@ export default function InvoicesPage() {
                   className="text-sm"
                   onClick={() => void handleCreateForBidder(b.id!)}
                 >
-                  Generate invoice
+                  Generate Buyer Bundle
                 </Button>
               </li>
             ))}
@@ -324,7 +324,7 @@ export default function InvoicesPage() {
         onError={(message) => showToast({ kind: "error", message })}
         onSuccess={(message) => showToast({ kind: "success", message })}
         onUnpaid={() =>
-          showToast({ kind: "success", message: "Invoice marked unpaid." })
+          showToast({ kind: "success", message: "Buyer Bundle marked unpaid." })
         }
       />
 

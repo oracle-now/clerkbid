@@ -29,12 +29,12 @@ import { EventSwitcher } from "./EventSwitcher";
 
 const nav = [
   { href: "/dashboard/", label: "Dashboard", icon: LayoutDashboard },
-  { href: "/events/", label: "Events", icon: CalendarDays },
-  { href: "/bidders/", label: "Bidders", icon: Users },
+  { href: "/events/", label: "Sales", icon: CalendarDays },
+  { href: "/bidders/", label: "Buyers", icon: Users },
   { href: "/consignors/", label: "Consignors", icon: Package },
-  { href: "/lots/", label: "Lots", icon: ClipboardList },
-  { href: "/clerking/", label: "Clerking", icon: Gavel },
-  { href: "/invoices/", label: "Invoices", icon: FileText },
+  { href: "/lots/", label: "Items", icon: ClipboardList },
+  { href: "/clerking/", label: "Sale clerking", icon: Gavel },
+  { href: "/invoices/", label: "Buyer Bundles", icon: FileText },
   { href: "/reports/", label: "Reports", icon: BarChart3 },
   { href: "/help/", label: "Help", icon: CircleHelp },
   { href: "/announcements/", label: "Message center", icon: Inbox },
@@ -104,7 +104,7 @@ export function Sidebar({
               Clerk<span className="text-gold">Bid</span>
             </span>
             <span className="mt-0.5 block text-xs text-muted dark:text-slate-400">
-              Auction clerking
+              Sale clerking
             </span>
           </Link>
           <button

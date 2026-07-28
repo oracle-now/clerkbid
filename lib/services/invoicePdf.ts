@@ -109,18 +109,18 @@ export function renderInvoiceOnDoc(doc: jsPDF, input: InvoicePdfInput): void {
   doc.setTextColor(30, 58, 95);
   doc.text(input.organizationName, 14, y);
   y += 8;
-  doc.setFontSize(14);
-  doc.text("INVOICE", 14, y);
+  doc.setFontSize(12);
+  doc.text("BUYER BUNDLE", 14, y);
   y += 10;
 
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.setTextColor(0, 0, 0);
-  doc.text(`Invoice #: ${input.invoiceNumber}`, 14, y);
+  doc.text(`Buyer Bundle #: ${input.invoiceNumber}`, 14, y);
   y += 5;
   doc.text(`Date: ${formatDateOnly(input.generatedAt)}`, 14, y);
   y += 5;
-  doc.text(`Event: ${input.eventName}`, 14, y);
+  doc.text(`Sale: ${input.eventName}`, 14, y);
   y += 10;
 
   doc.setFont("helvetica", "bold");
@@ -129,7 +129,7 @@ export function renderInvoiceOnDoc(doc: jsPDF, input: InvoicePdfInput): void {
   y += 5;
   doc.text(input.bidderName, 14, y);
   y += 5;
-  doc.text(`Paddle #${input.paddleNumber}`, 14, y);
+  doc.text(`Buyer code: ${input.paddleNumber}`, 14, y);
   y += 5;
   const contact = [input.phone, input.email].filter(Boolean).join("  ");
   if (contact) {
@@ -148,7 +148,7 @@ export function renderInvoiceOnDoc(doc: jsPDF, input: InvoicePdfInput): void {
 
   autoTable(doc, {
     startY: y,
-    head: [["Lot #", "Description", "Qty", "Unit", "Line total"]],
+    head: [["Item #", "Description", "Qty", "Unit", "Line total"]],
     body,
     theme: "striped",
     headStyles: { fillColor: [30, 58, 95] },
@@ -176,7 +176,7 @@ export function renderInvoiceOnDoc(doc: jsPDF, input: InvoicePdfInput): void {
   doc.setFont("helvetica", "normal");
   doc.setFontSize(10);
   doc.text(
-    `Hammer subtotal: ${formatCurrency(input.hammerSubtotal, sym)}`,
+    `Items subtotal: ${formatCurrency(input.hammerSubtotal, sym)}`,
     doc.internal.pageSize.getWidth() - 14,
     ty,
     { align: "right" }

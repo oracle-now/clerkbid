@@ -61,15 +61,15 @@ export default function BiddersPage() {
     return (
       <div>
         <Header
-          title="Bidders"
-          description="Select an event in the sidebar to manage bidders."
+          title="Buyers"
+          description="Select a sale in the sidebar to manage buyers."
           actions={
             <Link href="/events/" className={linkSecondary}>
-              Events
+              Sales
             </Link>
           }
         />
-        <p className="text-sm text-muted">No event selected.</p>
+        <p className="text-sm text-muted">No sale selected.</p>
       </div>
     );
   }
@@ -77,8 +77,8 @@ export default function BiddersPage() {
   return (
     <div>
       <Header
-        title="Bidders"
-        description={`Register and manage bidders for ${currentEvent.name}.`}
+        title="Buyers"
+        description={`Register and manage buyers for ${currentEvent.name}.`}
         actions={
           <>
             <input
@@ -130,12 +130,12 @@ export default function BiddersPage() {
                   );
                   if (toAdd.length > 0) scheduleCloudPush();
                   const parts: string[] = [];
-                  if (toAdd.length) parts.push(`Imported ${toAdd.length} bidder(s).`);
+                  if (toAdd.length) parts.push(`Imported ${toAdd.length} buyer(s).`);
                   if (issues.length)
                     parts.push(`${issues.length} row issue(s) in file.`);
                   if (conflicts.length)
                     parts.push(
-                      `Skipped ${conflicts.length} duplicate paddle(s) already in this event.`
+                      `Skipped ${conflicts.length} duplicate buyer code(s) already in this sale.`
                     );
                   const ok =
                     toAdd.length > 0 &&
@@ -169,14 +169,14 @@ export default function BiddersPage() {
                 ])
               }
             >
-              Bidder CSV template
+              Buyer CSV template
             </Button>
             <Button
               type="button"
               variant="secondary"
               onClick={() => csvRef.current?.click()}
             >
-              Import bidders (CSV)
+              Import buyers (CSV)
             </Button>
             <Button
               type="button"
@@ -185,7 +185,7 @@ export default function BiddersPage() {
                 setFormOpen(true);
               }}
             >
-              Register bidder
+              Register buyer
             </Button>
           </>
         }
@@ -217,15 +217,15 @@ export default function BiddersPage() {
           setFormOpen(false);
           setEditing(null);
         }}
-        onSaved={() => showToast({ kind: "success", message: "Bidder saved." })}
+        onSaved={() => showToast({ kind: "success", message: "Buyer saved." })}
       />
 
       <ConfirmDialog
         open={deleteTarget != null}
-        title="Delete bidder"
+        title="Delete buyer"
         message={
           deleteTarget
-            ? `Remove ${deleteTarget.firstName} ${deleteTarget.lastName} (paddle #${deleteTarget.paddleNumber})?`
+            ? `Remove ${deleteTarget.firstName} ${deleteTarget.lastName} (buyer code: ${deleteTarget.paddleNumber})?`
             : ""
         }
         confirmLabel="Delete"
@@ -238,7 +238,7 @@ export default function BiddersPage() {
           if (n > 0) {
             showToast({
               kind: "error",
-              message: "Cannot delete a bidder with recorded sales.",
+              message: "Cannot delete a buyer with recorded sales.",
             });
             setDeleteTarget(null);
             return;
@@ -260,7 +260,7 @@ export default function BiddersPage() {
             await flushSingleEventToCloudSnapshot(db, currentEventId);
           }
           scheduleCloudPush();
-          showToast({ kind: "success", message: "Bidder removed." });
+          showToast({ kind: "success", message: "Buyer removed." });
         }}
       />
     </div>
