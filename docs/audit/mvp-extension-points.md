@@ -1,17 +1,20 @@
 # MVP Extension Points — Live Sale Clerk Founder Class v0
 
-**Inspected commit:** `c69dddea4fe5957d893761dd4f451865ec22056d`  
+**Inspected commit (main):** `4fb07cbb5925d09ee9471e0d75164c7a32eee8ea`  
 **Audit date:** 2026-07-28  
 **Branch:** `audit/mvp-extension-points`  
-**Predecessor PR:** PR-01 (`audit/clerkbid-forensic-2026-07`, merged 2026-07-25)
+**Predecessor audits merged to main:**
+- PR-01 `audit/clerkbid-forensic-2026-07` — forensic audit (merged 2026-07-25)
+- PR-03 `audit/clerkbid-forensic-2026-07` — Copilot reuse matrix (merged 2026-07-28)
 
 ---
 
 > **STATUS: EXTENSION-POINT AUDIT — NOT IMPLEMENTATION AUTHORIZATION**
 >
 > This document records candidate attachment points identified by inspecting the
-> existing ClerkBid codebase. It does not approve schema changes or feature
-> scope. `AGENTS.md`, `docs/MVP.md`, and accepted ADRs will take precedence
+> existing ClerkBid codebase and `docs/audit/copilot-reuse-matrix.md`.
+> It does not approve schema changes or feature scope.
+> `AGENTS.md`, `docs/MVP.md`, and accepted ADRs will take precedence
 > over any candidate proposal recorded here.
 
 ---
@@ -19,26 +22,26 @@
 ## Scope
 
 This audit inspects the existing ClerkBid event, bidder, lot, sale, invoice,
-payment, local-storage, and sync implementation. It identifies the lowest-risk
+payment, local-storage, and sync implementation, and incorporates findings
+from `docs/audit/copilot-reuse-matrix.md`. It identifies the lowest-risk
 extension points for the Live Sale Clerk Founder Class v0 MVP. It does not
 modify application code, dependencies, schemas, tests, or other documentation.
 
-Files read:
-- `AGENTS.md` — not found in repository at HEAD
-- `docs/MVP.md` — not found in repository at HEAD
-- `docs/audit/domain-fit.md`
-- `docs/audit/data-ownership-and-sync.md`
-- `docs/audit/reuse-matrix.md` (canonical name; `copilot-reuse-matrix.md` path specified in task does not exist)
-- `docs/audit/implementation-plan.md`
-- `lib/saleFormOrder.ts`
-- `lib/services/invoiceLogic.ts`
-- `lib/services/saleInvoiceEdits.ts`
-- `lib/services/cloudSync.ts` (directory listing only)
-- `lib/services/snapshotMerge.ts` (directory listing only)
-- `lib/sync/ops/types.ts`
-- `lib/sync/ops/parseBodies.ts`
-- `lib/sync/ops/applyRemoteOp.ts`
-- `lib/db.ts` (via `data-ownership-and-sync.md` schema table; file not directly read)
+**Files read for this audit:**
+
+| File | Found |
+|---|---|
+| `AGENTS.md` | Not present at HEAD |
+| `docs/MVP.md` | Not present at HEAD |
+| `docs/audit/copilot-reuse-matrix.md` | ✅ Read (SHA `626298fd`) |
+| `docs/audit/reuse-matrix.md` | ✅ Read |
+| `docs/audit/domain-fit.md` | ✅ Read |
+| `docs/audit/data-ownership-and-sync.md` | ✅ Read |
+| `docs/audit/implementation-plan.md` | ✅ Read |
+| `lib/saleFormOrder.ts` | ✅ Read |
+| `lib/services/invoiceLogic.ts` | ✅ Read (via runtime-trace + domain-fit) |
+| `lib/services/saleInvoiceEdits.ts` | ✅ Read |
+| `lib/sync/ops/types.ts` | ✅ Read (via data-ownership-and-sync) |
 
 ---
 
@@ -51,7 +54,7 @@ Files read:
 | `lib/saleFormOrder.ts` | `LABELS` constant | `"Lot number"`, `"Hammer per unit"`, `"Paddle number"`, `"Quantity"`, `"Lot description / title"`, `"Lot notes / ring"`, `"Consignor"`, `"Clerk initials"` |
 | `lib/saleFormOrder.ts` | `ALL_SALE_FIELD_IDS` | Canonical field ID set: `lot`, `price`, `paddle`, `quantity`, `description`, `notes`, `consignor`, `initials` |
 | `lib/saleFormOrder.ts` | `DEFAULT_SALE_FIELD_REQUIRED` | Which fields are required by default |
-| `lib/saleFormOrder.ts` | `STORAGE_KEY` | `"clerkbid:saleFieldOrder"` — localStorage key |
+| `lib/saleFormOrder.ts` | `STORAGE_KEY` | `"clerkbid:saleFieldOrder"` — localStorage key for user-saved field order |
 
 However, this covers **only the clerking entry form**. Navigation labels,
 page headings, invoice PDFs, event/lot/bidder screens, empty states, toast
@@ -89,6 +92,7 @@ table in Dexie).
 | Sync impact | `AuctionEvent` is the root of every snapshot payload. `channel` propagates to the cloud snapshot with zero additional sync-op work. No op-log type change required. |
 | Export version | `dataPorter.ts` serialises all own properties of the event row. `channel` appears in v7+ exports automatically; a compat default of `undefined` on v1–v6 import is all that is needed. |
 | UI surface | One field on the event create/edit form. The channel value is then available to every child screen (invoices, reports, clerking) via the already-loaded event object. |
+| Copilot alignment | `copilot-reuse-matrix.md` §4 confirms Copilot has no channel concept; ClerkBid must define this independently. Event-level is consistent with Copilot's per-session framing of Whatnot drops. |
 
 ### Item-level channel — deferred
 
@@ -117,31 +121,38 @@ expression of intent that may be primary, backup, or expired — that does
 not become a `Sale` until the seller confirms it. Backup and nil claims
 must never be allocated to an Invoice.
 
-**The existing `Sale` model cannot safely represent a Claim without breaking
-the ownership invariant.** Adding `isPrimary`, `isBackup`, and `promotedAt`
-to `sales` was considered and rejected for the following reason:
+`copilot-reuse-matrix.md` §6 confirms this gap explicitly:
+
+> *"The Copilot repository does not provide the required Facebook claim-sale
+> model ... This workflow must be implemented using ClerkBid's existing
+> architecture. It is not a Copilot reuse candidate — it is a net-new
+> feature for ClerkBid."*
+
+**Adding `isPrimary`, `isBackup`, and `promotedAt` to `sales` was considered
+and rejected** for the following reason:
 
 > A backup or expired claim shares no structural properties with a completed
-> sale. Mixing them in the `sales` table would require every Invoice-allocation
-> path (`upsertInvoiceForBidder`, `recalculateAndPersistInvoice`,
-> `getSalesForInvoice`, `applyRemoteOp` sale.put/sale.delete, the op-log
-> parser, and the snapshot merge) to filter by status — a pervasive
-> guard that increases regression risk across the entire financial layer.
+> sale. Mixing them in the `sales` table would require every
+> Invoice-allocation path (`upsertInvoiceForBidder`,
+> `recalculateAndPersistInvoice`, `getSalesForInvoice`, `applyRemoteOp`
+> sale.put/sale.delete, the op-log parser, and the snapshot merge) to
+> filter by status — a pervasive guard that increases regression risk
+> across the entire financial layer.
 
 ### Ownership invariant
 
-> **Only one confirmed Sale (owner) may exist for a unique item within a sale
-> event.** Backup claims remain Claim records and must not create Sales or
-> enter Invoices until promoted and seller-confirmed.
+> **Only one confirmed Sale (owner) may exist for a unique item within a
+> sale event. Backup claims remain Claim records and must not create Sales
+> or enter Invoices until promoted and seller-confirmed.**
 
-This invariant must be enforced at the domain layer before any `db.sales.add()`
-call. It cannot be enforced by the Dexie schema alone.
+This invariant must be enforced at the domain layer before any
+`db.sales.add()` call. It cannot be enforced by the Dexie schema alone.
 
 ### Candidate Claim entity
 
 The following is a **candidate design, not an approved schema**. It is
-recorded here to identify the files that would need to be involved. Final
-field names and status values require a separate design ADR.
+recorded here to identify the files that would need to be involved.
+Final field names and status values require a separate design ADR.
 
 ```
 Claim {
@@ -165,8 +176,8 @@ type ClaimStatus =
   | "promoted"   // was backup; now primary (terminal state of the backup record)
 ```
 
-Note: `position` allows ordered backup queues (first backup, second backup).
-`status` captures the lifecycle without relying on position alone.
+`position` allows ordered backup queues. `status` captures the lifecycle
+without relying on position alone.
 
 ### Existing files involved per operation
 
@@ -186,35 +197,36 @@ If Claims sync via op-log (like Sales and Invoices), a `claim.put` and
 `lib/sync/ops/types.ts`. The `applyRemoteOp.ts` switch must handle them.
 If Claims sync via snapshot only (like Lots and Bidders), no op-log change
 is needed but real-time multi-device sync will lag until the next full
-snapshot push.
-
-This decision must be made in the PR-E design ADR.
+snapshot push. This decision must be made in the PR-E design ADR.
 
 ---
 
 ## 4. Buyer Platform Identity — Attachment Point
 
-**Finding:** Adding `platformUsername?: string` to the `Bidder` entity is
-additive and low risk.
+**Finding:** Adding `platformUsername?: string` (and optionally
+`platformType?: string`) to the `Bidder` entity is additive and low risk.
+This aligns with `copilot-reuse-matrix.md` §7:
+
+> *"Prefer extending the existing buyer/bidder entity with optional platform
+> identity fields (e.g., `platformType`, `platformUsername`) unless
+> repository constraints prove that approach unsafe."*
 
 | Factor | Assessment |
 |---|---|
-| Schema risk | Optional field; no existing code path breaks on `undefined`. |
+| Schema risk | Optional fields; no existing code path breaks on `undefined`. |
 | Snapshot merge | `snapshotMerge.ts` handles bidder rows as whole entities by `syncKey`; new fields pass through transparently. |
-| Export | `dataPorter.ts` serialises all own properties; field appears in v7+ exports automatically. |
+| Export | `dataPorter.ts` serialises all own properties; fields appear in v7+ exports automatically. |
 | CSV import | `csvImportBidders.ts` ignores unknown columns; existing CSVs import correctly. |
 | Op-log | No bidder op type exists; bidders sync via snapshot only. No op change required. |
+| Copilot buyer key | `_make_buyer_key` in Copilot uses a three-tier fallback (`user:` → `name:` → `ship:`). The ClerkBid `platformUsername` field would store the resolved platform identity; the mapping logic belongs in the import adapter, not in the bidder entity itself. |
 
 **Constraint:** `platformUsername` must not replace `paddleNumber` as the
 uniqueness index. The `[eventId+paddleNumber]` compound index in Dexie is
-load-bearing for `findBidderIdByPaddle` in `applyRemoteOp.ts`. Paddle
-uniqueness must be preserved; `platformUsername` is an additional
-display/import key only.
+load-bearing for `findBidderIdByPaddle` in `applyRemoteOp.ts`.
 
 **Unresolved design question:** Should `platformUsername` be a per-event
 field (on `Bidder`, scoped to one sale) or a cross-event identity (outside
-current schema scope)? This decision must be made in PR-D scope review
-before any field is added.
+current schema scope)? This must be decided in PR-D scope review.
 
 ---
 
@@ -236,32 +248,42 @@ Grouping is implemented in `lib/services/invoiceLogic.ts` via two mechanisms:
 **Cross-event isolation:** `Invoice.eventId` + `Invoice.bidderId` are both
 stored; all queries are scoped by `eventId` first.
 
+`copilot-reuse-matrix.md` §8 confirms this model is the correct foundation:
+
+> *"ClerkBid's existing `Invoice` ↔ `Sale` relationship already models the
+> concept of 'a buyer's grouped purchases.' The gap is not aggregate
+> structure — it is the absence of explicit fulfillment and exception
+> states on the invoice."*
+
 ---
 
 ## 6. Invoice as Buyer Bundle Foundation
 
-**Finding:** The `Invoice` entity is the appropriate foundation for the Buyer
-Bundle concept. It already provides:
+**Finding:** The `Invoice` entity is the appropriate foundation for the
+Buyer Bundle concept. It already provides:
 
 | Bundle requirement | Current field | Status |
 |---|---|---|
 | Groups all confirmed sales for one buyer | `bidderId` FK + `upsertInvoiceForBidder` | ✅ Present |
 | Itemised line list | `sale.invoiceId` FK; `getSalesForInvoice` | ✅ Present |
 | Manual adjustments | `manualLines: InvoiceManualLine[]` | ✅ Present |
-| Payment state | `status: "paid" | "unpaid"` | ✅ Present |
+| Payment state | `status: "paid" \| "unpaid"` | ✅ Present |
 | Payment method | `paymentMethod` | ✅ Present |
 | Stable cross-device identity | `syncKey` (UUID) | ✅ Present |
 | BP suppression when not applicable | `buyersPremiumRate = 0` hides line | ✅ Config only |
 
-However, **Invoice grouping is reusable but not directly deployable as a
-Buyer Bundle without operational adaptation.** The following concerns
-require separate implementation approval before PR-G ships:
+**Invoice grouping is reusable, but operational adaptation may require
+fulfillment state, exception state, channel-aware UI, auction-field
+suppression, and a decision about supplemental invoices. These require
+separate implementation approval.**
+
+Specifically, the following concerns must each be resolved before PR-G ships:
 
 1. **Fulfillment state** — payment and fulfillment are currently conflated in `status`; operational workflows (picking, packing, shipping) need independent state (see §7).
 2. **Exception state** — lost items, damaged items, and disputed claims have no current model.
 3. **Channel-aware UI** — a Facebook Claim Desk bundle view differs from a traditional auction invoice view; UI adaptation scope is not yet defined.
 4. **Auction-field suppression** — `buyersPremiumRate`, `taxRate`, `invoiceNumber`, and clerk-initials are auction-house concepts that require hide/rename decisions, not just a default of 0.
-5. **Supplemental invoice decision** — the current model creates a new invoice when all prior invoices are paid. Whether this is the correct behavior for a live-sale bundle (where a buyer might win multiple items across a long stream) must be decided before PR-G.
+5. **Supplemental invoice decision** — the current model creates a new invoice when all prior invoices are paid. Whether this is correct for a live-sale bundle must be decided before PR-G.
 
 ---
 
@@ -270,6 +292,15 @@ require separate implementation approval before PR-G ships:
 **Recommended attachment:** `Invoice` (the Buyer Bundle) is the leading
 attachment point for a `fulfillmentStatus` field. Each bundle represents
 one buyer's complete pick-up or shipment unit.
+
+`copilot-reuse-matrix.md` §10 identifies a related gap:
+
+> *"The 7-field flat CSV optimized for Pirateship/Shippo ingestion is a
+> better fulfillment artifact for Whatnot sellers than an invoice PDF at
+> MVP."*
+
+This confirms that fulfillment state on the Invoice is both structurally
+correct and operationally required for the target seller workflow.
 
 **Candidate operational states** (not finalized):
 
@@ -285,15 +316,13 @@ one buyer's complete pick-up or shipment unit.
 | `complete` | All fulfillment steps done |
 | `exception` | Problem state (lost item, damage, dispute) |
 
-These states are **candidates only**. Final field name, type (enum string vs.
-Date timestamps vs. structured state object), and transition rules require a
-separate design decision in the PR-H scope review.
+These states are **candidates only**. Final field name, type, and transition
+rules require a separate design decision in the PR-H scope review.
 
-**Why not multiple timestamp fields alone (`packedAt`, `fulfilledAt`):**
-Timestamps are useful audit data but do not model exception states, partial
-fulfillment, or staff assignment. A single `fulfillmentStatus` field with
-a transition log (or a `fulfillmentEvents` array) is more operationally
-complete. The exact shape is out of scope for this audit.
+**Why not multiple timestamp fields alone:** Timestamps are useful audit data
+but do not model exception states, partial fulfillment, or staff assignment.
+A single `fulfillmentStatus` field with a transition log is more
+operationally complete. The exact shape is out of scope for this audit.
 
 **Files that would be involved:**
 - `lib/db.ts` — new field on `invoices` table (requires Dexie version bump)
@@ -306,9 +335,9 @@ complete. The exact shape is out of scope for this audit.
 
 ## 8. Dexie Schema — Version Change Requirements
 
-Current schema version: **v10** (`lib/db.ts`, per `data-ownership-and-sync.md`).
+Current schema version: **v10** (`lib/db.ts`).
 
-This audit does **not** recommend batching all changes into a single v11
+This audit does **not** recommend batching all changes into a single
 migration. Each PR that requires a schema change must carry its own
 version bump and upgrade hook, reviewed independently.
 
@@ -328,35 +357,33 @@ No version numbers are pre-reserved here.
 
 ### Cloud snapshot (JSONB, `event_cloud_snapshots`)
 
-The snapshot is the full `EventExportPayload` produced by `dataPorter.ts`.
 New optional fields on existing tables (`events.channel`,
 `bidders.platformUsername`, `invoices.fulfillmentStatus`) are automatically
-included because `dataPorter.ts` serialises all own properties. No snapshot
-schema change is needed for these fields.
+included in the snapshot because `dataPorter.ts` serialises all own
+properties. No snapshot schema change is needed for these fields.
 
-A new `claims` table would require a new array in `EventExportPayload` and
-a corresponding import path in `dataPorter.ts`. **Export version must be
+A new `claims` table requires a new array in `EventExportPayload` and a
+corresponding import path in `dataPorter.ts`. **Export version must be
 bumped** (to v7 or higher) when the `claims` table is introduced. Existing
 v1–v6 import paths must be preserved with a `claims: []` default.
 
 ### Op-log (`syncOutbox` / `event_sync_ops`)
 
-Current op types: `sale.put`, `sale.delete`, `invoice.put`, `invoice.patch`
-(defined in `lib/sync/ops/types.ts`).
+Current op types: `sale.put`, `sale.delete`, `invoice.put`, `invoice.patch`.
 
 | Proposal | Op-log impact |
 |---|---|
 | `events.channel` | None — event fields sync via full snapshot |
 | `bidders.platformUsername` | None — bidders sync via full snapshot |
-| `claims` table | Decision required: op-log sync (new `claim.put` / `claim.delete` types in `types.ts`, new parsers in `parseBodies.ts`, new handler branch in `applyRemoteOp.ts`) vs. snapshot-only sync |
-| `invoices.fulfillmentStatus` | Carried by existing `InvoicePatchBody.patch: Record<string, unknown>` — no new op type needed; `applyRemoteOp.ts` invoice.patch handler must recognise the field |
+| `claims` table | Decision required: op-log sync (new `claim.put` / `claim.delete` types) vs. snapshot-only sync — see §3 |
+| `invoices.fulfillmentStatus` | Carried by existing `InvoicePatchBody.patch: Record<string, unknown>`; no new op type needed; `applyRemoteOp.ts` invoice.patch handler must recognise the field |
 
 ### Snapshot merge (`snapshotMerge.ts`)
 
-New optional fields on existing entities pass through as plain object
-properties; no change required. A new `claims` table requires a new
-merge branch in `snapshotMerge.ts` (entity-level merge by `syncKey`,
-following the existing pattern for sales and invoices).
+New optional fields on existing entities pass through transparently; no
+change required. A new `claims` table requires a new merge branch in
+`snapshotMerge.ts` (entity-level merge by `syncKey`, following the existing
+pattern for sales and invoices).
 
 ---
 
@@ -373,12 +400,12 @@ following the existing pattern for sales and invoices).
 | `lib/services/invoiceBranding.test.ts` | Branding resolution |
 | `lib/services/cloudDeleteTombstone.test.ts` | Tombstone dedup |
 | `lib/sync/ops/parseBodies.test.ts` | Op-log body validation; **must be extended when any new op body type is introduced** |
-| `lib/security/vendorIsolation.test.ts` | Cross-vendor isolation on sync routes (added in PR-02) |
+| `lib/security/vendorIsolation.test.ts` | Cross-vendor isolation on sync routes (added in PR-02, open) |
 
 **Gaps with no current test coverage:**
 - `lib/saleFormOrder.ts` — no unit tests
 - `lib/services/saleInvoiceEdits.ts` — no unit tests
-- `lib/sync/ops/applyRemoteOp.ts` — no direct unit tests (exercised indirectly via snapshotMerge and cloudSyncRefresh tests)
+- `lib/sync/ops/applyRemoteOp.ts` — no direct unit tests (exercised indirectly)
 - Ownership uniqueness invariant — no enforcement exists; no tests exist
 
 ---
@@ -394,7 +421,7 @@ by this document.
 | PR-A | `docs/agents-and-mvp` | Create `AGENTS.md` and `docs/MVP.md`; establish agent constraints and MVP scope boundary |
 | PR-B | `feat/terminology-rename` | Terminology rename only — `lib/saleFormOrder.ts` `LABELS`, page headings, navigation; requires full grep inventory first |
 | PR-C | `feat/event-channel` | Add `channel?: string` to `AuctionEvent`; one field on event create/edit form; no op-log change |
-| PR-D | `feat/buyer-platform-identity` | Add `platformUsername?: string` to `Bidder`; update CSV import header; no op-log change |
+| PR-D | `feat/buyer-platform-identity` | Add `platformUsername?: string` (and optionally `platformType?: string`) to `Bidder`; update CSV import header; no op-log change |
 | PR-E | `feat/claim-domain` | Design ADR for Claim entity; new `claims` table; claim service; ownership invariant guard; sync contract decision; tests |
 | PR-F | `feat/facebook-claim-desk` | Facebook Claim Desk UI; claim entry; primary/backup workflow; uses Claim entity from PR-E |
 | PR-G | `feat/buyer-bundle-presentation` | Invoice presented as Buyer Bundle; auction-field suppression; channel-aware UI; supplemental invoice decision |
@@ -404,39 +431,33 @@ by this document.
 
 ## Unresolved Source-Level Questions
 
-1. **`AGENTS.md` absent.** No agent constraint file was found at HEAD. If
-   agent constraints have been established outside the repository (e.g., in
-   a project management tool or a separate document), they have not been
-   applied to this audit. PR-A must create `AGENTS.md` before any
-   implementation PR begins.
+1. **`AGENTS.md` absent.** No agent constraint file was found at HEAD.
+   PR-A must create it before any implementation PR begins.
 
-2. **`docs/MVP.md` absent.** No MVP scope document was found at HEAD.
-   Without a defined scope boundary, this audit cannot distinguish
+2. **`docs/MVP.md` absent.** No MVP scope boundary document was found at
+   HEAD. Without a defined scope boundary, this audit cannot distinguish
    in-scope from out-of-scope proposals with authority. PR-A must create
    `docs/MVP.md`.
 
-3. **`docs/audit/copilot-reuse-matrix.md` not found.** The task specified
-   reading this file. The canonical file in the repository is
-   `docs/audit/reuse-matrix.md`, which was read and incorporated. If a
-   separate AI1-produced `copilot-reuse-matrix.md` was intended to exist on
-   `main`, it does not. No finding in this document depends on missing data.
-
-4. **Claim sync strategy undecided.** Op-log sync vs. snapshot-only for the
+3. **Claim sync strategy undecided.** Op-log sync vs. snapshot-only for the
    `claims` table is a consequential design choice. Op-log sync provides
    real-time multi-device convergence but requires new op types, parsers,
    and an `applyRemoteOp` handler. Snapshot-only sync is lower risk but
    lags until the next push. This must be decided in the PR-E ADR.
 
-5. **`platformUsername` scope.** Per-event (on `Bidder`) vs. cross-event
+4. **`platformUsername` scope.** Per-event (on `Bidder`) vs. cross-event
    user-profile identity must be decided in PR-D scope review.
 
-6. **Supplemental invoice behavior.** The current `upsertInvoiceForBidder`
+5. **Supplemental invoice behavior.** The current `upsertInvoiceForBidder`
    creates a new invoice when all prior invoices are paid. Whether this is
-   correct for a live-sale Buyer Bundle (where a buyer wins items across a
-   long stream) must be decided before PR-G.
+   correct for a live-sale Buyer Bundle must be decided before PR-G.
 
-7. **`applyRemoteOp.ts` has no direct unit tests.** Any extension of this
-   file (for new op types or new field handling) carries regression risk
-   that is currently only partially mitigated by indirect test coverage.
-   PR-E should add direct unit tests for this file as part of claim-sync
+6. **`applyRemoteOp.ts` has no direct unit tests.** Any extension of this
+   file carries regression risk partially mitigated only by indirect
+   coverage. PR-E should add direct unit tests as part of claim-sync
    implementation.
+
+7. **Whatnot import contract undefined.** `copilot-reuse-matrix.md` §3.1
+   explicitly parks all Whatnot parser candidates until a real redacted
+   Whatnot livestream-report CSV has been inspected and an import contract
+   ADR is accepted. No Whatnot import work should begin before that ADR.
