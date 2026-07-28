@@ -114,25 +114,30 @@ function makeDeleteRequest(params: Record<string, string>) {
 async function status(res: Response | NextResponse) { return res.status; }
 async function json(res: Response | NextResponse) { return res.json(); }
 
+function sqlCallValues(): unknown[] {
+  const calls = (sql as unknown as Mock).mock.calls as unknown[][];
+  return calls.flatMap((call) => call.slice(1));
+}
+
 // ---------------------------------------------------------------------------
 // SUITE 1: Unauthenticated
 // ---------------------------------------------------------------------------
 describe("Unauthenticated requests", () => {
   beforeEach(() => { vi.clearAllMocks(); mockSession(null); });
 
-  it("POST /api/sync/push → 401", async () => {
+  it("POST /api/sync/push \u2192 401", async () => {
     const res = await syncPush(makePushRequest({ eventSyncId: SYNC_ID_A, payload: PAYLOAD_A, clientExportedAt: new Date().toISOString() }));
     expect(await status(res)).toBe(401);
     expect((await json(res)).error).toMatch(/unauthorized/i);
   });
-  it("GET /api/sync/event → 401", async () => {
+  it("GET /api/sync/event \u2192 401", async () => {
     expect(await status(await syncEventGet(makeGetRequest({ syncId: SYNC_ID_B }, "/api/sync/event")))).toBe(401);
   });
-  it("DELETE /api/sync/event → 401", async () => {
+  it("DELETE /api/sync/event \u2192 401", async () => {
     expect(await status(await syncEventDelete(makeDeleteRequest({ syncId: SYNC_ID_B })))).toBe(401);
   });
-  it("GET /api/sync/list → 401", async () => {
-    expect(await status(await syncList(new Request("http://localhost/api/sync/list")))).toBe(401);
+  it("GET /api/sync/list \u2192 401", async () => {
+    expect(await status(await syncList())).toBe(401);
   });
 });
 
@@ -142,21 +147,21 @@ describe("Unauthenticated requests", () => {
 describe("Expired / malformed session", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("POST /api/sync/push → 401 when vendorId is not a number", async () => {
+  it("POST /api/sync/push \u2192 401 when vendorId is not a number", async () => {
     (getServerSession as Mock).mockResolvedValue({ user: { id: "101", vendorId: "not-a-number" } });
     expect(await status(await syncPush(makePushRequest({ eventSyncId: SYNC_ID_A, payload: PAYLOAD_A, clientExportedAt: new Date().toISOString() })))).toBe(401);
   });
-  it("GET /api/sync/event → 401 when vendorId missing", async () => {
+  it("GET /api/sync/event \u2192 401 when vendorId missing", async () => {
     (getServerSession as Mock).mockResolvedValue({ user: { id: "101", vendorId: undefined } });
     expect(await status(await syncEventGet(makeGetRequest({ syncId: SYNC_ID_B }, "/api/sync/event")))).toBe(401);
   });
-  it("DELETE /api/sync/event → 401 when vendorId missing", async () => {
+  it("DELETE /api/sync/event \u2192 401 when vendorId missing", async () => {
     (getServerSession as Mock).mockResolvedValue({ user: { id: "101", vendorId: undefined } });
     expect(await status(await syncEventDelete(makeDeleteRequest({ syncId: SYNC_ID_B })))).toBe(401);
   });
-  it("GET /api/sync/list → 401 when vendorId missing", async () => {
+  it("GET /api/sync/list \u2192 401 when vendorId missing", async () => {
     (getServerSession as Mock).mockResolvedValue({ user: { id: "101", vendorId: undefined } });
-    expect(await status(await syncList(new Request("http://localhost/api/sync/list")))).toBe(401);
+    expect(await status(await syncList())).toBe(401);
   });
 });
 
@@ -175,7 +180,7 @@ describe("Vendor A cannot read Vendor B events", () => {
   it("SQL uses Vendor A vendorId (10), never Vendor B (20)", async () => {
     mockSqlEmpty();
     await syncEventGet(makeGetRequest({ syncId: SYNC_ID_B }, "/api/sync/event"));
-    const allValues = (sql as unknown as Mock).mock.calls.flatMap(([, ...vals]: [TemplateStringsArray, ...unknown[]]) => vals);
+    const allValues = sqlCallValues();
     expect(allValues).toContain(10);
     expect(allValues).not.toContain(20);
   });
@@ -193,7 +198,7 @@ describe("Vendor A cannot overwrite Vendor B events via push", () => {
       .mockResolvedValueOnce({ rows: [{ updated_at: new Date() }] });
     const res = await syncPush(makePushRequest({ eventSyncId: SYNC_ID_B, payload: PAYLOAD_A, clientExportedAt: new Date().toISOString() }));
     expect(await status(res)).toBe(200);
-    const allValues = (sql as unknown as Mock).mock.calls.flatMap(([, ...vals]: [TemplateStringsArray, ...unknown[]]) => vals);
+    const allValues = sqlCallValues();
     expect(allValues).toContain(10);
     expect(allValues).not.toContain(20);
   });
@@ -201,7 +206,7 @@ describe("Vendor A cannot overwrite Vendor B events via push", () => {
     (sql as unknown as Mock).mockResolvedValue({ rows: [{ updated_at: new Date() }] });
     const res = await syncPush(makePushRequest({ eventSyncId: SYNC_ID_B, payload: PAYLOAD_A, clientExportedAt: new Date().toISOString(), force: true }));
     expect(await status(res)).toBe(200);
-    const allValues = (sql as unknown as Mock).mock.calls.flatMap(([, ...vals]: [TemplateStringsArray, ...unknown[]]) => vals);
+    const allValues = sqlCallValues();
     expect(allValues).toContain(10);
     expect(allValues).not.toContain(20);
   });
@@ -217,7 +222,7 @@ describe("Vendor A cannot delete Vendor B events", () => {
     mockSqlEmpty();
     const res = await syncEventDelete(makeDeleteRequest({ syncId: SYNC_ID_B }));
     expect(await status(res)).toBe(200);
-    const allValues = (sql as unknown as Mock).mock.calls.flatMap(([, ...vals]: [TemplateStringsArray, ...unknown[]]) => vals);
+    const allValues = sqlCallValues();
     expect(allValues).toContain(10);
     expect(allValues).not.toContain(20);
   });
@@ -231,18 +236,18 @@ describe("GET /api/sync/list scoping", () => {
 
   it("returns only Vendor A events", async () => {
     mockSqlRows([{ event_sync_id: SYNC_ID_A, updated_at: new Date() }]);
-    const res = await syncList(new Request("http://localhost/api/sync/list"));
+    const res = await syncList();
     expect(await status(res)).toBe(200);
     const body = await json(res);
     expect(body.events).toHaveLength(1);
     expect(body.events[0].eventSyncId).toBe(SYNC_ID_A);
-    const allValues = (sql as unknown as Mock).mock.calls.flatMap(([, ...vals]: [TemplateStringsArray, ...unknown[]]) => vals);
+    const allValues = sqlCallValues();
     expect(allValues).toContain(10);
     expect(allValues).not.toContain(20);
   });
   it("Vendor B syncId never returned in Vendor A list", async () => {
     mockSqlRows([{ event_sync_id: SYNC_ID_A, updated_at: new Date() }]);
-    const body = await (await syncList(new Request("http://localhost/api/sync/list"))).json();
+    const body = await (await syncList()).json();
     expect(body.events.map((e: { eventSyncId: string }) => e.eventSyncId)).not.toContain(SYNC_ID_B);
   });
 });
@@ -250,7 +255,7 @@ describe("GET /api/sync/list scoping", () => {
 // ---------------------------------------------------------------------------
 // SUITE 7: Foreign child IDs in push payload (documented gap)
 // ---------------------------------------------------------------------------
-describe("Foreign child IDs in push payload (gap — this test is expected to fail until fixed)", () => {
+describe("Foreign child IDs in push payload (gap \u2014 this test is expected to fail until fixed)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSession(VENDOR_A);
@@ -259,7 +264,7 @@ describe("Foreign child IDs in push payload (gap — this test is expected to fa
       .mockResolvedValueOnce({ rows: [{ updated_at: new Date() }] });
   });
 
-  it("[GAP] push with foreign child IDs should be rejected — currently returns 200", async () => {
+  it("[GAP] push with foreign child IDs should be rejected \u2014 currently returns 200", async () => {
     const res = await syncPush(makePushRequest({ eventSyncId: SYNC_ID_A, payload: PAYLOAD_WITH_FOREIGN_CHILD_IDS, clientExportedAt: new Date().toISOString() }));
     // Route currently returns 200 (gap). Change to 400 when payload validation is added.
     expect(await status(res)).toBe(200);
@@ -296,10 +301,10 @@ describe("Valid cross-vendor session", () => {
   it("GET /api/sync/list: Vendor B session returns only Vendor B events", async () => {
     vi.clearAllMocks(); mockSession(VENDOR_B);
     mockSqlRows([{ event_sync_id: SYNC_ID_B, updated_at: new Date() }]);
-    const body = await (await syncList(new Request("http://localhost/api/sync/list"))).json();
+    const body = await (await syncList()).json();
     expect(body.events.map((e: { eventSyncId: string }) => e.eventSyncId)).not.toContain(SYNC_ID_A);
     expect(body.events.map((e: { eventSyncId: string }) => e.eventSyncId)).toContain(SYNC_ID_B);
-    const allValues = (sql as unknown as Mock).mock.calls.flatMap(([, ...vals]: [TemplateStringsArray, ...unknown[]]) => vals);
+    const allValues = sqlCallValues();
     expect(allValues).toContain(20);
     expect(allValues).not.toContain(10);
   });
@@ -307,7 +312,7 @@ describe("Valid cross-vendor session", () => {
     vi.clearAllMocks(); mockSession(VENDOR_B); mockSqlEmpty();
     const res = await syncEventDelete(makeDeleteRequest({ syncId: SYNC_ID_A }));
     expect(await status(res)).toBe(200);
-    const allValues = (sql as unknown as Mock).mock.calls.flatMap(([, ...vals]: [TemplateStringsArray, ...unknown[]]) => vals);
+    const allValues = sqlCallValues();
     expect(allValues).toContain(20);
     expect(allValues).not.toContain(10);
   });
@@ -316,7 +321,7 @@ describe("Valid cross-vendor session", () => {
 // ---------------------------------------------------------------------------
 // SUITE 10: Invalid input / HTTP behavior
 // ---------------------------------------------------------------------------
-describe("HTTP behavior — invalid input", () => {
+describe("HTTP behavior \u2014 invalid input", () => {
   beforeEach(() => { vi.clearAllMocks(); mockSession(VENDOR_A); });
 
   it("GET /api/sync/event with non-UUID syncId returns 400", async () => {
