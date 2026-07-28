@@ -53,11 +53,11 @@ export const DEFAULT_SALE_FIELD_REQUIRED: Record<SaleFieldId, boolean> = {
 
 const LABELS: Record<SaleFieldId, string> = {
   lot: "Item number",
-  price: "Sale price per unit",
+  price: "Sale price per item",
   paddle: "Buyer code",
   quantity: "Quantity",
   description: "Item description / title",
-  notes: "Item notes / ring",
+  notes: "Item notes",
   consignor: "Consignor",
   initials: "Seller initials",
 };

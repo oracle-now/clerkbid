@@ -1,7 +1,7 @@
 {
   "name": "ClerkBid",
   "short_name": "ClerkBid",
-  "description": "Live auction clerking—works on-device if the connection drops after sign-in; sign-in and cloud backup need the internet.",
+  "description": "Live sale clerking—works on-device if the connection drops after sign-in; sign-in and cloud backup need the internet.",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#ffffff",

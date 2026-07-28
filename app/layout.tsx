@@ -7,7 +7,7 @@ import { THEME_BOOTSTRAP_SCRIPT } from "@/lib/displayPrefs";
 export const metadata: Metadata = {
   title: "ClerkBid",
   description:
-    "Live auction clerking for fundraising—local data on your device, cloud backup when signed in online; keeps working if the connection drops after sign-in.",
+    "Live sale clerking for fundraising—local data on your device, cloud backup when signed in online; keeps working if the connection drops after sign-in.",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,

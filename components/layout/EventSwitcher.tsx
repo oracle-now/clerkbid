@@ -20,7 +20,7 @@ export function EventSwitcher() {
   if (!ready || !dbReady || !events) {
     return (
       <div className="rounded-lg border border-navy/10 bg-white px-3 py-2 text-xs text-muted dark:border-slate-700 dark:bg-slate-800 dark:text-slate-400">
-        Loading events…
+        Loading sales…
       </div>
     );
   }
@@ -28,7 +28,7 @@ export function EventSwitcher() {
   return (
     <div>
       <label htmlFor="event-switcher" className="sr-only">
-        Current event
+        Current sale
       </label>
       <select
         id="event-switcher"
@@ -39,7 +39,7 @@ export function EventSwitcher() {
           void switchEvent(v === "" ? null : Number(v));
         }}
       >
-        <option value="">No event selected</option>
+        <option value="">No sale selected</option>
         {events.map((ev) => (
           <option key={ev.id} value={ev.id}>
             {ev.name}
