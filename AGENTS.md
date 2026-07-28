@@ -55,6 +55,7 @@ violates them must be rejected regardless of convenience.
 | DR-5 | Invoice is the **Buyer Bundle foundation**. All confirmed sales for a buyer are grouped into an Invoice before fulfillment. |
 | DR-6 | **Facebook and Whatnot use separate intake workflows.** They share the downstream Buyer Bundle and fulfillment core but have distinct pre-confirmation paths. |
 | DR-7 | **n8n is not a system of record.** Workflow automation may trigger, notify, or read — it must not write or mutate ClerkBid data. |
+| DR-8 | **Claim position is seller-determined.** The seller assigns or confirms backup position. First entered in the system is not automatically first commenter; entry order must not be used as a proxy for comment order without explicit seller confirmation. |
 
 ---
 
@@ -65,6 +66,9 @@ that introduces these must be rejected at review.
 
 - Facebook scraping or autonomous posting
 - Whatnot browser automation
+- Whatnot CSV import (conditional: blocked until a real redacted Whatnot
+  livestream-report CSV is inspected and an import-contract ADR is accepted
+  — see `docs/audit/copilot-reuse-matrix.md §3.1`)
 - PayPal or Venmo integration
 - n8n dependency (n8n must not be a required runtime component)
 - AI claim parsing (claims are entered manually by the seller or assistant)
@@ -118,7 +122,7 @@ work.
   without an accepted scope declaration in the opening PR description.
 - Confirm item ownership on behalf of a seller.
 - Write to ClerkBid's database from an external automation tool.
-- Merge a PR that violates a domain rule (DR-1 through DR-7).
+- Merge a PR that violates a domain rule (DR-1 through DR-8).
 - Proceed past a Stop Condition.
 
 ---
@@ -131,6 +135,7 @@ work.
 | `docs/audit/executive-verdict.md` | Fork decision, pilot timeline, confidence levels |
 | `docs/audit/domain-fit.md` | Entity mapping, new fields required, invariant gap table |
 | `docs/audit/reuse-matrix.md` | Module-level KEEP/ADAPT/WRAP/EXTRACT/REPLACE/REMOVE decisions |
+| `docs/audit/copilot-reuse-matrix.md` | Copilot → ClerkBid reuse matrix; Whatnot import contract blocker (§3.1); Facebook claim-sale gap (§6); buyer model recommendation (§7) |
 | `docs/audit/mvp-extension-points.md` | Candidate extension points (not implementation authorization) |
 | `docs/audit/implementation-plan.md` | PR sequence, file ownership, accepted risks |
 | `docs/audit/open-questions.md` | Blocking questions, decision owners, resolution tracker |

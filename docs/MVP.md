@@ -3,7 +3,7 @@
 **Status:** Authoritative scope document  
 **Effective:** 2026-07-28  
 **Supersedes:** All prior informal scope discussions  
-**Governed by:** `AGENTS.md` domain rules DR-1 through DR-7
+**Governed by:** `AGENTS.md` domain rules DR-1 through DR-8
 
 ---
 
@@ -31,7 +31,9 @@ types claims in.
     ↓
 [Clerk enters buyer name / paddle + claim type: Primary | Backup]
     ↓
-[System records Claim with position in backup queue]
+[Seller assigns or confirms the backup position in the queue]
+    ↓
+[System records Claim with seller-confirmed position]
     ↓
 [Seller confirms or rejects primary]
     ↓
@@ -45,6 +47,10 @@ types claims in.
 - Claim entry is **manual**. No automated claim reading.
 - A backup claim has a **position** (1st backup, 2nd backup, …). Position
   determines promotion order.
+- **Position is seller-determined.** First entered in the system is not
+  automatically the first commenter. The seller assigns or confirms the
+  correct position. Entry order must not be used as a proxy for comment
+  order without explicit seller confirmation (DR-8).
 - Only the **seller** confirms ownership (DR-4). The system records the
   confirmation; it does not issue it.
 - A Claim becomes a Sale only after seller confirmation. Until then it is
@@ -66,20 +72,20 @@ types claims in.
 
 ### What it is
 
-A seller-operated screen where the clerk manually imports or enters
-completed purchases from the Whatnot seller dashboard. The source data
-exists in Whatnot; the clerk transcribes or CSV-imports it into ClerkBid.
+A seller-operated screen where the clerk manually enters completed purchases
+from the Whatnot seller dashboard into ClerkBid. The source data exists in
+Whatnot; the clerk reads it and enters each purchase by hand.
 
 ### Workflow
 
 ```
 [Whatnot drop ends]
     ↓
-[Seller downloads completed-purchase data from Whatnot dashboard]
+[Seller opens completed-purchase data in Whatnot dashboard]
     ↓
 [Clerk opens Whatnot Intake screen in ClerkBid]
     ↓
-[Clerk manually enters or CSV-imports purchase records]
+[Clerk manually enters each completed purchase record]
     ↓
 [Each purchase → Sale record in ClerkBid under the active event]
     ↓
@@ -88,15 +94,22 @@ exists in Whatnot; the clerk transcribes or CSV-imports it into ClerkBid.
 
 ### Constraints
 
-- Intake is **manual or CSV-import only**. No Whatnot API integration, no
-  browser automation, no OAuth to Whatnot.
+- **Intake is manual.** The clerk reads the Whatnot dashboard and enters
+  each purchase by hand. No Whatnot API integration, no browser
+  automation, no OAuth to Whatnot.
+- **CSV import is not promised for MVP.** CSV import is a conditional
+  feature blocked until: (a) a real redacted Whatnot livestream-report CSV
+  has been inspected, and (b) an import-contract ADR has been accepted.
+  No parser, field mapping, or import UI may be built before that ADR is
+  approved. See `docs/audit/copilot-reuse-matrix.md §3.1` for the
+  explicit blocker statement.
 - Whatnot purchases enter as **confirmed Sales** directly (no Claim step;
   the platform has already confirmed purchase).
 - The `channel` field on `AuctionEvent` is set to `whatnot` for these
   events, distinguishing them from Facebook events in reports and UI.
 - Duplicate prevention: if a lot+buyer combination already has a Sale for
-  this event, the import must reject the duplicate and surface it to the
-  clerk (DR-3).
+  this event, entry must reject the duplicate and surface it to the clerk
+  (DR-3).
 
 ### Out of scope for this intake path
 
@@ -104,6 +117,7 @@ exists in Whatnot; the clerk transcribes or CSV-imports it into ClerkBid.
 - Whatnot browser automation
 - Real-time Whatnot event monitoring
 - Automatic Whatnot payout reconciliation
+- Whatnot CSV import (conditional — blocked pending import-contract ADR)
 
 ---
 
@@ -131,9 +145,10 @@ buyer within one event are grouped into a single Invoice via
 
 ### Fulfillment state — MVP scope
 
-A `fulfillmentStatus` field on Invoice is **in scope** but deferred to
-PR-H. For the Founder Class v0 pilot, sellers use the payment status
-(`paid` / `unpaid`) and manual notes as a proxy for fulfillment tracking.
+Fulfillment is a **separate operational state** from payment. A `fulfillmentStatus`
+field on Invoice is **in scope** but deferred to PR-H. For the Founder Class
+v0 pilot, sellers use the payment status (`paid` / `unpaid`) and manual notes
+as a proxy for fulfillment tracking.
 
 The following fulfillment operations are **not** in scope for v0:
 - Shipping label generation
@@ -164,7 +179,7 @@ is not modified.
 | State | Description |
 |---|---|
 | `claim.primary` | Buyer's first-position claim; awaiting seller confirmation |
-| `claim.backup` | Ordered backup position; awaiting promotion |
+| `claim.backup` | Ordered backup position; seller-assigned; awaiting promotion |
 | `claim.expired` | Backup window closed without promotion |
 | `claim.canceled` | Seller or buyer canceled |
 | `claim.promoted` | Was backup; promoted to primary (terminal for this Claim record) |
@@ -177,7 +192,8 @@ is not modified.
 | Excluded | Reason |
 |---|---|
 | Automated claim reading | DR-4: seller confirmation is authoritative; automation cannot confirm |
-| Whatnot real-time sync | Out of scope; intake is manual/CSV |
+| Whatnot real-time sync | Out of scope; intake is manual |
+| Whatnot CSV import | **Conditional** — blocked until real redacted Whatnot CSV inspected and import-contract ADR accepted (`copilot-reuse-matrix.md §3.1`) |
 | PayPal / Venmo payment processing | Out of scope for v0 |
 | AI claim parsing | Out of scope for v0 |
 | Repost automation | Out of scope for v0 |
@@ -199,7 +215,7 @@ one live Facebook sale event and one Whatnot intake event:
 | # | Criterion | How verified |
 |---|---|---|
 | SC-1 | Every sold item has exactly one confirmed owner in ClerkBid | Zero duplicate `sale` rows for the same `(eventId, lotId)` pair |
-| SC-2 | Backup queue is preserved in position order for every lot with multiple claims | Claim records exist with correct `position` values; first backup promoted correctly when primary falls through |
+| SC-2 | Backup queue is preserved in seller-assigned position order for every lot with multiple claims | Claim records exist with correct `position` values; seller-confirmed first backup promoted correctly when primary falls through |
 | SC-3 | No backup Claim appears in any Invoice | Query `db.sales` — all rows have `invoiceId` only from confirmed-primary flow; no backup Claim has a Sale row |
 | SC-4 | Every confirmed buyer has a Buyer Bundle (Invoice) grouping all their purchases | `upsertInvoiceForBidder` called after each confirmation; Invoice contains all expected Sale rows |
 | SC-5 | Seller can export a complete operational record at any point during the sale | `dataPorter.ts` export completes without error; re-import restores full state |
@@ -263,6 +279,7 @@ based on this document alone.
 | ADR-5 | Facebook Claim Desk: real-time op-log sync for Claims, or accept that Claims are device-local until next snapshot push | PR-F (`feat/facebook-claim-desk`) | Depends on ADR-1 resolution |
 | ADR-6 | Auction-field suppression mechanism: per-channel UI config object vs. hidden CSS vs. schema-level `channelDefaults` | PR-G | Per-channel config object; no schema change |
 | ADR-7 | `applyRemoteOp.ts` test coverage: add direct unit tests in PR-E, or defer to integration test suite? | PR-E | Add direct unit tests in PR-E (gap identified in `mvp-extension-points.md §10`) |
+| ADR-8 | Whatnot import contract: inspect a real redacted Whatnot livestream-report CSV; define field mapping, encoding, deduplication key, and price convention before any parser or import UI is built | Blocks CSV import entirely | No CSV import until ADR accepted (see `copilot-reuse-matrix.md §3.1`) |
 
 ---
 
@@ -273,6 +290,7 @@ This document was derived from:
 - `docs/audit/executive-verdict.md` — Decision B (Vertical Fork), confidence, pilot timeline
 - `docs/audit/domain-fit.md` — entity mapping, new fields, invariant gap table
 - `docs/audit/reuse-matrix.md` — KEEP/ADAPT/WRAP/EXTRACT/REPLACE/REMOVE decisions
+- `docs/audit/copilot-reuse-matrix.md` — Whatnot import contract blocker (§3.1), Facebook claim-sale gap (§6), buyer model (§7)
 - `docs/audit/mvp-extension-points.md` — candidate extension points, entity designs, sync contracts
 - `docs/audit/implementation-plan.md` — PR sequence and file ownership
 - `docs/audit/open-questions.md` — blocking questions and resolution tracker
