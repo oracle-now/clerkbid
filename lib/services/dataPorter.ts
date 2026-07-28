@@ -8,7 +8,7 @@ import type {
   Sale,
 } from "@/lib/db";
 import { withCloudSyncApply } from "@/lib/db/syncApplyGuard";
-import { APP_VERSION } from "@/lib/utils/constants";
+import { APP_VERSION, isPaymentMethod } from "@/lib/utils/constants";
 import { newEntitySyncKey } from "@/lib/utils/clientSyncKey";
 import { toDate } from "@/lib/utils/coerceDate";
 import { newEventSyncId } from "@/lib/utils/syncId";
@@ -253,16 +253,30 @@ export function parseEventExportPayload(raw: unknown): EventExportPayload {
     throw new Error("Missing bidders or lots arrays");
   }
   const sales = Array.isArray(o.sales) ? o.sales : [];
-  const invoices = Array.isArray(o.invoices) ? o.invoices : [];
+  const rawInvoices = Array.isArray(o.invoices) ? o.invoices : [];
   const consignors = Array.isArray(o.consignors)
     ? o.consignors
     : ([] as EventExportPayload["consignors"]);
+
+  // Validate paymentMethod on each invoice entry before accepting the payload
+  for (let i = 0; i < rawInvoices.length; i++) {
+    const inv = rawInvoices[i];
+    if (inv != null && typeof inv === "object" && !Array.isArray(inv)) {
+      const pm = (inv as Record<string, unknown>).paymentMethod;
+      if (pm !== undefined && pm !== null && !isPaymentMethod(pm)) {
+        throw new Error(
+          `Invoice entry ${i + 1}: unknown paymentMethod value "${String(pm)}"`
+        );
+      }
+    }
+  }
+
   return {
     ...(o as EventExportPayload),
     exportVersion: v as number,
     consignors,
     sales: sales as EventExportPayload["sales"],
-    invoices: invoices as EventExportPayload["invoices"],
+    invoices: rawInvoices as EventExportPayload["invoices"],
   };
 }
 
