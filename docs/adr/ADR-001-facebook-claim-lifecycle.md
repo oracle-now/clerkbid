@@ -4,6 +4,7 @@
 |---|---|
 | **Status** | Accepted |
 | **Date** | 2026-07-28 |
+| **Revised** | 2026-07-28 (rev 2) |
 | **Deciders** | Jacquelyn (founder) |
 | **Governed by** | `AGENTS.md` DR-1 through DR-8 |
 | **Blocking PRs** | PR-E (`feat/claim-domain`), PR-F (`feat/facebook-claim-desk`) |
@@ -14,10 +15,16 @@
 ## 1. Context
 
 During a Facebook live-sale event the seller (or one assistant) operates
-the Claim Desk. Buyers comment on the video — "Sold", "NIL", "NEXT", or a
+the Claim Desk. Buyers comment on the video — “Sold”, “NIL”, “NEXT”, or a
 bid phrase — and the clerk enters each comment as a Claim record. Multiple
 bidders may compete for the same item; only one may be confirmed as the
 owner. Backups must be preserved in ordered queue.
+
+**Current state of Claims in the codebase:** Claim records do not yet
+exist in any Dexie store, schema, or export/import path. The Claim
+interface, Dexie table, and all persistence and export/import support are
+new work to be introduced in PR-E (`feat/claim-domain`). Nothing in this
+ADR assumes Claims are already persisted or synced.
 
 This ADR records the authoritative lifecycle rules for Claims in the
 Facebook intake path. It governs how Claim records are created, advanced,
@@ -56,22 +63,26 @@ historical record only.
 
 > **Invariant (DR-4).** No code path — including workflow automation,
 > background job, timer, or AI agent — may set a Claim to confirmed or
-> create a Sale on the seller's behalf.
+> create a Sale on the seller’s behalf.
 
-The system records the seller's confirmation action; it does not issue it.
+The system records the seller’s confirmation action; it does not issue it.
 A UI affordance that automatically confirms based on queue position or
 comment content is prohibited for Founder Class v0.
 
-### 2.4 One item has at most one confirmed owner per Sale event
+### 2.4 One item has at most one active confirmed owner per Sale event
 
-> **Invariant (DR-3).** At most one Sale record may exist for a given
-> `(eventId, lotId)` pair with a confirmed owner at any point in time.
+> **Uniqueness invariant (DR-3).** At most one Sale record may be in an
+> active (non-voided) confirmed state for a given `(eventId, lotId)` pair
+> at any point in time.
 
-If the seller confirms a primary claim and then a backup is promoted and
-also confirmed (e.g. after a voided Sale — see §2.7), the prior Sale must
-be voided before or atomically with the new confirmation. The system must
-enforce this constraint at the domain layer; the UI must surface the
-conflict and require explicit seller action.
+This is an **ownership uniqueness** constraint, not an idempotency rule.
+It means the domain layer must reject any attempt to create a second
+active confirmed Sale for the same event and item — regardless of which
+Claim triggered the attempt. If the seller confirms a primary Claim and
+then a backup is promoted and also confirmed, the prior Sale must be
+explicitly voided (via the corrective workflow in §2.7) before or
+atomically with the new confirmation. The UI must surface this conflict
+and require explicit seller action.
 
 ### 2.5 Promotion and confirmation are separate unless explicitly acted together
 
@@ -81,7 +92,7 @@ conflict and require explicit seller action.
 > confirmation.
 
 A single seller UI action _may_ combine promotion and confirmation into
-one atomic step — "Promote & Confirm" — if the seller explicitly invokes
+one atomic step — “Promote & Confirm” — if the seller explicitly invokes
 it. When such a combined action is available in the UI it must be clearly
 labelled so the seller understands both operations are occurring. The
 underlying domain model still records them as two distinct events:
@@ -93,19 +104,26 @@ If only promotion is performed (e.g. the seller wants to review before
 finalising), the Claim sits in `status: "promoted"` and awaits a
 separate confirmation step.
 
-### 2.6 Sale creation is idempotent
+### 2.6 Retrying confirmation of the same Claim is a no-op
 
-> **Invariant.** Calling the Sale-creation path for a Claim that has
-> already produced a confirmed Sale must be a no-op that returns the
-> existing Sale, never a duplicate.
+> **Idempotency rule.** Calling the Sale-creation path for a Claim that
+> has already produced a confirmed Sale must be a no-op: the existing
+> Sale is returned and no duplicate is created.
 
-The idempotency key is `(eventId, lotId)` — one confirmed Sale per
-`(event, lot)` pair. The domain layer checks for an existing confirmed
-Sale before inserting. If one is found, the request is treated as
-already-applied and the existing Sale is returned without error.
+This is distinct from the uniqueness invariant in §2.4:
 
-This rule applies equally to the local Dexie write path and to any
-op-log or snapshot sync that replays claim confirmations (see §2.8).
+- **Uniqueness (§2.4)** prevents a *different* Claim from creating a
+  second active owner for the same event and item.
+- **Idempotency (§2.6)** prevents the *same* Claim from being processed
+  twice (e.g. a double-tap, a network retry, or a sync replay).
+
+The domain layer identifies a retry by the originating Claim’s own
+identifier, not by `(eventId, lotId)`. If the Claim already has an
+associated confirmed Sale, the operation is treated as already-applied
+and the existing Sale is returned without error. If no Sale is associated
+but an active confirmed Sale for the same event and item exists from a
+*different* Claim, that is a uniqueness violation (§2.4), not a retry,
+and must be rejected.
 
 ### 2.7 Post-invoice undo requires an explicit corrective workflow
 
@@ -114,31 +132,37 @@ op-log or snapshot sync that replays claim confirmations (see §2.8).
 > retroactively removed. Correction requires an explicit corrective
 > workflow invoked by the seller.
 
-The corrective workflow for MVP is:
+The minimal corrective workflow for PR-E is:
 
 1. Seller voids the Sale (`sale.status: "voided"`).
-2. If the Sale was the last or only item on an Invoice, the Invoice is
-   set to `status: "voided"` as well.
-3. If other confirmed Sales for the same buyer remain, a new Invoice
-   may be created or the existing one updated (per ADR-3 behavior, to
-   be resolved in PR-G).
-4. Optionally, the seller may then promote a backup Claim and confirm a
+2. The voided Sale is retained for audit. Physical deletion of Sale rows
+   is prohibited in application code.
+3. Optionally, the seller may then promote a backup Claim and confirm a
    new owner (§2.5), which creates a fresh Sale record.
 
-Step 1 is the only required step. Steps 2–4 are follow-on seller
-actions, not automatic consequences.
+Step 1 is the only required step for PR-E. Step 3 is an optional
+follow-on seller action.
 
-> **Implementation note:** "void" is a domain state change, not a
-> database delete. Voided Sale rows are retained for audit. Physical
-> deletion of Sale or Invoice rows is prohibited in application code.
+> **Invoice-side correction is deferred.** How the Invoice (Buyer Bundle)
+> responds when its constituent Sales are voided — whether it is
+> auto-corrected, requires a seller action, or accumulates into a new
+> invoice — is not decided here. That behavior is deferred to
+> **ADR-3 / PR-G** (`feat/buyer-bundle-presentation`). No claim is made
+> about whether Invoice currently has or will have a `voided` status.
 
 ### 2.8 MVP sync recommendation and conflict behavior
 
 #### Recommended approach: snapshot-only (ADR-1 default)
 
-For Founder Class v0, Claim state is **not** propagated through the
-op-log sync (`/api/sync/push`). Only the full event snapshot is
-persisted to and restored from cloud storage.
+For Founder Class v0, the recommended approach is that Claim state is
+persisted locally in Dexie and included in the event snapshot that
+`/api/sync/push` already transports. Claims do not require a separate
+op-log channel.
+
+**This requires PR-E to:** add Claims to the export/import payload so
+that the snapshot includes the full Claim array for an event. Until PR-E
+delivers this, Claims exist only in the local Dexie store and are not
+synced or recoverable from cloud storage.
 
 **Rationale:**
 
@@ -146,37 +170,29 @@ persisted to and restored from cloud storage.
   is the downstream Sale they may produce. Once confirmed, the Sale is
   the durable record.
 - A solo founder using one device has no multi-device Claim-sync
-  requirement.
-- Adding Claims to the op-log introduces schema, ordering, and conflict
-  complexity that is not justified by a single-device v0 use case.
-- The snapshot already includes the full Claim array; any device that
-  pulls a fresh snapshot recovers complete state.
+  requirement for v0.
+- Adding Claims to a separate op-log introduces schema, ordering, and
+  conflict complexity not justified by the v0 use case.
+
+#### Future requirement: conflict behavior for Claim snapshots
+
+Once PR-E includes Claims in the snapshot payload, the existing
+`/api/sync/push` conflict-detection mechanism (comparing client-supplied
+timestamp against a stored server timestamp and returning a conflict
+response for stale pushes) should apply to snapshots that contain
+Claims, in the same way it applies to snapshots today. The specifics —
+which timestamp field is compared, the exact response shape, and whether
+a force-override is permitted — must be confirmed against the
+implemented route behavior at the time PR-E is written. These are
+**future requirements for PR-E**, not descriptions of current behavior.
 
 #### Accepted limitations of snapshot-only
 
 | Limitation | Severity for MVP | Mitigation |
 |---|---|---|
+| Claims not recoverable from cloud before PR-E delivers export/import | Medium — device loss before push loses in-flight Claims | Seller should push snapshot frequently during live sale |
 | Two devices editing Claims concurrently may diverge | Low — solo seller, one device | Documented; multi-device scenario deferred to post-MVP |
-| Real-time Claim visibility across devices lags until next push | Low — sole operator | Seller pushes snapshot at will; `NEXT_PUBLIC_ABLY_SYNC` nudge available |
-| Replay of individual Claim events not possible from cloud | Low — not an audit requirement for v0 | Full snapshot retained; Sale and Invoice records are durable |
-
-#### Conflict behavior
-
-If two snapshot pushes for the same event arrive concurrently or
-out-of-order:
-
-1. The server applies a **last-write-wins** rule using `clientExportedAt`
-   as the client-side timestamp.
-2. If the incoming `clientExportedAt` is **older** than the stored
-   `updated_at`, the server returns `409 sync_conflict`; the client must
-   re-fetch, reconcile locally, and re-push with `force: false`.
-3. The seller may override with `force: true` to stomp the remote
-   state, accepting the risk of overwriting a more recent push from
-   another session. This override path is documented as a gap
-   (no permission gate in v0 — see `security-gaps.md` Gap #2).
-4. Sale and Invoice records are embedded in the snapshot; conflict
-   resolution for those records follows the same rule. No special
-   merge logic is applied to Sale rows.
+| Replay of individual Claim events not possible from cloud | Low — not an audit requirement for v0 | Full snapshot retained after PR-E; Sale and Invoice records are durable |
 
 ---
 
@@ -197,7 +213,9 @@ out-of-order:
           │ seller confirms
           ▼
   ┌──────────────────────────────────────────────────────────────┐
-  │  Sale created (idempotent)  →  added to Invoice (Buyer Bundle)│
+  │  Sale created (idempotent re same Claim)                      │
+  │  → uniqueness check: reject if active confirmed Sale exists    │
+  │  → added to Invoice (Buyer Bundle) on success                  │
   └──────────────────────────────────────────────────────────────┘
 
   [Clerk enters backup]
@@ -213,10 +231,12 @@ out-of-order:
   │   promoted   │  (not yet a Sale — awaits confirmation)
   └──────────────┘
           │
-          │ seller confirms (separate step, or combined "Promote & Confirm")
+          │ seller confirms (separate step, or combined “Promote & Confirm”)
           ▼
   ┌──────────────────────────────────────────────────────────────┐
-  │  Sale created (idempotent)  →  added to Invoice (Buyer Bundle)│
+  │  Sale created (idempotent re same Claim)                      │
+  │  → uniqueness check: reject if active confirmed Sale exists    │
+  │  → added to Invoice (Buyer Bundle) on success                  │
   └──────────────────────────────────────────────────────────────┘
 
   ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─
@@ -233,7 +253,7 @@ out-of-order:
           │ optional: seller promotes backup → confirms new owner
           ▼
   ┌──────────────────────────────────────────────────────────────┐
-  │  New Sale created  →  new or updated Invoice                 │
+  │  New Sale created  →  Invoice behavior per ADR-3 / PR-G        │
   └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -245,56 +265,105 @@ out-of-order:
 |---|---|---|---|
 | I-1 | Backup/NIL Claim is never a Sale | DR-1 | §2.1 |
 | I-2 | Backup Claims never enter Buyer Bundles | DR-2 | §2.2 |
-| I-3 | One confirmed owner per item per Sale event | DR-3 | §2.4 |
+| I-3 | One active confirmed owner per item per Sale event (uniqueness) | DR-3 | §2.4 |
 | I-4 | Seller confirmation is authoritative | DR-4 | §2.3 |
 | I-5 | Promotion and confirmation are separate unless explicitly combined | DR-4, DR-8 | §2.5 |
-| I-6 | Sale creation is idempotent | DR-3 | §2.6 |
+| I-6 | Retrying confirmation of the same Claim is a no-op (idempotency) | DR-3 | §2.6 |
 | I-7 | Post-invoice undo requires explicit corrective workflow | DR-4 | §2.7 |
-| I-8 | Snapshot-only sync for v0; last-write-wins conflict resolution | ADR-1 default | §2.8 |
+| I-8 | Snapshot-only sync for v0; Claim export/import delivered by PR-E | ADR-1 default | §2.8 |
 
 ---
 
 ## 5. Unresolved Implementation Questions
 
-The following questions are **not** resolved by this ADR. Each must be
-answered before the corresponding implementation PR opens.
-
 | # | Question | Blocking PR | Notes |
 |---|---|---|---|
-| UIQ-1 | Should the "Promote & Confirm" combined action be the default UX, or should promotion and confirmation always be two separate taps? | PR-F | Affects Claim Desk layout. Combined action is faster for solo sellers but reduces auditability of intermediate state. |
-| UIQ-2 | When a voided Sale is the last item on an Invoice, should the Invoice be auto-voided or require a separate seller action? | PR-E / PR-G | Relates to ADR-3 (supplemental invoice behavior). |
-| UIQ-3 | Should promoted Claims remain visible in the Claim Desk queue (greyed out) or be removed from the active view? | PR-F | UX decision; no domain impact. |
-| UIQ-4 | Is the `phrase` field (NIL/NEXT text stored on Claim) displayed to the seller during confirmation, or only stored for export? | PR-F | Small UX decision; useful for seller to verify entry accuracy. |
-| SYQ-1 | Once Claims are included in the snapshot, should the conflict-resolution policy for Claim records differ from Sale records (e.g. merge backup queues rather than stomp)? | Post-MVP / ADR-1 full resolution | Out of scope for v0 snapshot-only approach; document for future consideration. |
-| SYQ-2 | Should `force: true` on `/api/sync/push` require a seller-visible confirmation dialog, or remain a silent API flag? | PR-E or security follow-up | Currently a gap (no permission gate). See `security-gaps.md`. |
+| UIQ-1 | Should the “Promote & Confirm” combined action be the default UX, or should promotion and confirmation always be two separate taps? | PR-F only | Affects Claim Desk layout. Combined action is faster for solo sellers but reduces auditability of intermediate state. |
+| UIQ-2 | When a voided Sale is the last item on an Invoice, should the Invoice be auto-corrected or require a separate seller action? | ADR-3 / PR-G | Deferred. Does not block PR-E. Invoice-side correction behavior is not defined here. |
+| UIQ-3 | Should promoted Claims remain visible in the Claim Desk queue (greyed out) or be removed from the active view? | PR-F only | UX decision; no domain impact. |
+| UIQ-4 | Is the `phrase` field (NIL/NEXT text stored on Claim) displayed to the seller during confirmation, or only stored for export? | PR-F only | Small UX decision; useful for seller to verify entry accuracy. |
+| SYQ-1 | Once Claims are included in the snapshot, should conflict-resolution policy for Claim records differ from Sale records (e.g. merge backup queues rather than stomp)? | Post-MVP / ADR-1 full resolution | Out of scope for v0; document for future consideration. |
 
 ---
 
-## 6. Consequences
+## 6. PR-E Acceptance Requirements
+
+The following must all be true before `feat/claim-domain` (PR-E) may merge.
+
+### 6.1 Data model
+
+- [ ] A `Claim` TypeScript interface is defined with at minimum:
+  `id`, `syncKey`, `eventId`, `lotId`, `bidderId`, `type` (`"primary"` |
+  `"backup"`), `status` (`"primary"` | `"backup"` | `"promoted"` |
+  `"canceled"` | `"expired"`), `position` (numeric, backup queue order),
+  `phrase` (optional string), `saleId` (optional, set only on
+  confirmation), `createdAt`, `updatedAt`.
+- [ ] A `claims` Dexie table is added to the local database store.
+- [ ] The Dexie schema version is incremented; migration path is
+  documented. The schema-version decision (increment vs. new table with
+  no migration needed) must be made and recorded in the PR description
+  before merge.
+
+### 6.2 Export / import
+
+- [ ] The `claims` array is included in the export payload produced by
+  `dataPorter.ts` (or equivalent).
+- [ ] Import correctly restores Claim records from the payload.
+- [ ] On import, buyer (`bidderId`) and lot (`lotId`) references are
+  remapped to the local Dexie IDs of the corresponding imported records.
+  If a referenced record cannot be remapped, the Claim is rejected and
+  the error is surfaced to the clerk.
+- [ ] Queue order (`position`) survives a full export → re-import round
+  trip without reordering or gaps.
+
+### 6.3 Domain invariant tests
+
+Each of the following must have a passing Vitest test in the PR-E test
+suite:
+
+- [ ] **Backup creates no Sale or Invoice entry.** Entering a backup
+  Claim and advancing it to any terminal state other than
+  `"promoted"` + confirmed never creates a Sale row or adds an entry
+  to an Invoice.
+- [ ] **Same-Claim retry creates no duplicate Sale.** Calling the
+  Sale-creation path twice for the same Claim returns the existing
+  Sale on the second call and does not insert a new row.
+- [ ] **Second active owner is rejected.** Attempting to create a
+  confirmed Sale for an `(eventId, lotId)` pair that already has an
+  active confirmed Sale (from a different Claim) is rejected at the
+  domain layer with a typed error. The existing Sale is not modified.
+- [ ] **Replacement owner requires explicit correction.** Confirming a
+  new owner for an item whose prior Sale has been voided succeeds;
+  confirming a new owner without first voiding the prior Sale is
+  rejected (per the uniqueness invariant §2.4).
+
+---
+
+## 7. Consequences
 
 ### Positive
 
 - All implementation PRs touching Claim, Sale, or Invoice logic have an
   unambiguous reference document.
-- The invariants expressed here are directly testable. Each may be
-  expressed as a Vitest test in the claim-domain test suite.
+- The invariants expressed here are directly testable. Each maps to a
+  specific test requirement in §6.3.
 - Snapshot-only sync keeps v0 implementation complexity low and
-  consistent with the existing `/api/sync/push` architecture.
+  consistent with the existing `/api/sync/push` architecture once
+  PR-E adds Claim export/import.
 
 ### Negative / accepted trade-offs
 
+- Claims are not recoverable from cloud storage until PR-E ships the
+  export/import path. Device loss during a live sale before the seller
+  pushes a snapshot will lose in-flight Claim state.
 - Multi-device real-time Claim visibility is not supported. Acceptable
   for a solo-founder MVP.
-- The corrective workflow (§2.7) adds UI surface area that is not
-  present in the base ClerkBid fork. This surface must be built in
-  PR-E / PR-F.
-- Snapshot conflict resolution (last-write-wins) can cause data loss
-  if two sessions push simultaneously. Accepted for v0 with the
-  documented `force:true` gap.
+- The corrective workflow (§2.7) adds UI surface area not present in
+  the base ClerkBid fork. This surface must be built in PR-E / PR-F.
 
 ---
 
-## 7. Alternatives Considered
+## 8. Alternatives Considered
 
 | Alternative | Reason rejected |
 |---|---|
@@ -305,7 +374,7 @@ answered before the corresponding implementation PR opens.
 
 ---
 
-## 8. References
+## 9. References
 
 - `AGENTS.md` — domain rules DR-1 through DR-8
 - `docs/MVP.md` — §1 (Facebook intake workflow), §4 (claim states),
