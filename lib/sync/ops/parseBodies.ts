@@ -4,6 +4,7 @@ import type {
   SaleDeleteBody,
   SalePutBody,
 } from "@/lib/sync/ops/types";
+import { isPaymentMethod } from "@/lib/utils/constants";
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return x != null && typeof x === "object" && !Array.isArray(x);
@@ -91,13 +92,8 @@ export function parseInvoicePutBody(body: unknown): InvoicePutBody | null {
   const generatedAt = body.generatedAt;
   if (typeof generatedAt !== "string") return null;
   const pm = body.paymentMethod;
-  if (
-    pm != null &&
-    pm !== "cash" &&
-    pm !== "check" &&
-    pm !== "credit_card" &&
-    pm !== "other"
-  ) {
+  // null/undefined → cleared; known string → accepted; anything else → reject
+  if (pm != null && !isPaymentMethod(pm)) {
     return null;
   }
   let paymentDate: string | null | undefined;
@@ -152,7 +148,7 @@ export function parseInvoicePutBody(body: unknown): InvoicePutBody | null {
     buyersPremiumRate,
     taxRate,
     manualLines,
-    paymentMethod: pm ?? undefined,
+    paymentMethod: isPaymentMethod(pm) ? pm : undefined,
     paymentDate,
   };
 }

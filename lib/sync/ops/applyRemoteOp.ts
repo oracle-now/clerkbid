@@ -11,6 +11,7 @@ import {
   parseSaleDeleteBody,
   parseSalePutBody,
 } from "@/lib/sync/ops/parseBodies";
+import { isPaymentMethod } from "@/lib/utils/constants";
 
 export type ApplyRemoteOpResult =
   | { ok: true }
@@ -306,16 +307,14 @@ async function applyRemoteOpImpl(
           row.manualLines = v as Invoice["manualLines"];
         } else if (k === "status" && (v === "paid" || v === "unpaid")) {
           row.status = v;
-        } else if (
-          k === "paymentMethod" &&
-          (v === "cash" ||
-            v === "check" ||
-            v === "credit_card" ||
-            v === "other" ||
-            v == null)
-        ) {
-          if (v == null) delete row.paymentMethod;
-          else row.paymentMethod = v;
+        } else if (k === "paymentMethod") {
+          // Use shared guard; null clears the field; unknown non-null values are not applied
+          if (v == null) {
+            delete row.paymentMethod;
+          } else if (isPaymentMethod(v)) {
+            row.paymentMethod = v;
+          }
+          // else: unknown value — silently skip (no mutation)
         } else if (
           (k === "buyersPremiumRate" || k === "taxRate") &&
           (typeof v === "number" || v === null)

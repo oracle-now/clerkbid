@@ -10,6 +10,15 @@ export const PAYMENT_METHODS = [
 
 export type PaymentMethodValue = (typeof PAYMENT_METHODS)[number]["value"];
 
+/** Type guard derived from PAYMENT_METHODS. No separate allowlist. */
+const _PAYMENT_METHOD_VALUES: ReadonlySet<string> = new Set(
+  PAYMENT_METHODS.map((m) => m.value)
+);
+
+export function isPaymentMethod(value: unknown): value is PaymentMethodValue {
+  return typeof value === "string" && _PAYMENT_METHOD_VALUES.has(value);
+}
+
 export const LOT_STATUSES = [
   "unsold",
   "sold",
