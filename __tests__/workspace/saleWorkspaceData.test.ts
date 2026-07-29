@@ -1,14 +1,19 @@
 /**
  * Unit tests for lib/workspace/saleWorkspaceData.ts
  *
- * All 10 required workspace tests are pure — no DOM, no Dexie, no React.
+ * All tests are pure — no DOM, no Dexie, no React.
+ * They import the same WORKSPACE_AREAS and EMPTY_STATE_DESTINATION
+ * objects consumed by SaleWorkspace.tsx, so route/label assertions
+ * target production values rather than duplicated literals.
+ *
  * Vitest environment: node (see vitest.config.ts).
  */
 import { describe, it, expect } from "vitest";
 import {
-  deriveSaleWorkspace,
+  WORKSPACE_AREAS,
+  EMPTY_STATE_DESTINATION,
+  deriveWorkspaceCounts,
   containsInternalLabel,
-  INTERNAL_LABELS,
   type WorkspaceCounts,
 } from "@/lib/workspace/saleWorkspaceData";
 
@@ -19,127 +24,119 @@ import {
 const baseCounts = (overrides: Partial<WorkspaceCounts> = {}): WorkspaceCounts => ({
   itemCount: 0,
   buyerCount: 0,
-  bundleCount: 0,
-  unpaidCount: 0,
+  buyerBundleCount: 0,
   ...overrides,
 });
+
+/** Flat list of all actions across all areas. */
+const allActions = WORKSPACE_AREAS.flatMap((area) => area.actions);
 
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
 describe("saleWorkspaceData", () => {
-  // 1. Workspace displays the active Sale name
-  it("1: includes the sale name in workspace output", () => {
-    const ws = deriveSaleWorkspace("Spring Estate Sale", baseCounts({ itemCount: 5, buyerCount: 3 }));
-    expect(ws.saleName).toBe("Spring Estate Sale");
+
+  // 1. Set up, Sell, and Buyer Bundles all exist
+  it("1: exports Set up, Sell, and Buyer Bundles areas", () => {
+    const ids = WORKSPACE_AREAS.map((a) => a.id);
+    expect(ids).toContain("setup");
+    expect(ids).toContain("sell");
+    expect(ids).toContain("bundles");
   });
 
-  // 2. Set up, Sell, and Pack sections — phase derivation covers all three
-  it("2a: returns setup phase when itemCount is zero", () => {
-    const ws = deriveSaleWorkspace("Test", baseCounts({ itemCount: 0, buyerCount: 5 }));
-    expect(ws.phase).toBe("setup");
+  // 2. /lots/ belongs to Manage items
+  it("2: Manage items action links to /lots/", () => {
+    const action = allActions.find((a) => a.id === "items");
+    expect(action).toBeDefined();
+    expect(action!.label).toBe("Manage items");
+    expect(action!.href).toBe("/lots/");
   });
 
-  it("2b: returns setup phase when buyerCount is zero", () => {
-    const ws = deriveSaleWorkspace("Test", baseCounts({ itemCount: 10, buyerCount: 0 }));
-    expect(ws.phase).toBe("setup");
+  // 3. /bidders/ belongs to Manage buyers
+  it("3: Manage buyers action links to /bidders/", () => {
+    const action = allActions.find((a) => a.id === "buyers");
+    expect(action).toBeDefined();
+    expect(action!.label).toBe("Manage buyers");
+    expect(action!.href).toBe("/bidders/");
   });
 
-  it("2c: returns selling phase when items and buyers exist but no bundles", () => {
-    const ws = deriveSaleWorkspace("Test", baseCounts({ itemCount: 10, buyerCount: 5, bundleCount: 0 }));
-    expect(ws.phase).toBe("selling");
+  // 4. /claims/ belongs to Facebook claims
+  it("4: Facebook claims action links to /claims/", () => {
+    const action = allActions.find((a) => a.id === "claims");
+    expect(action).toBeDefined();
+    expect(action!.label).toBe("Facebook claims");
+    expect(action!.href).toBe("/claims/");
   });
 
-  it("2d: returns packing phase when at least one bundle exists", () => {
-    const ws = deriveSaleWorkspace("Test", baseCounts({ itemCount: 10, buyerCount: 5, bundleCount: 3 }));
-    expect(ws.phase).toBe("packing");
+  // 5. /clerking/ belongs to Enter a completed purchase
+  it("5: Enter a completed purchase action links to /clerking/", () => {
+    const action = allActions.find((a) => a.id === "completed-purchase");
+    expect(action).toBeDefined();
+    expect(action!.label).toBe("Enter a completed purchase");
+    expect(action!.href).toBe("/clerking/");
   });
 
-  // 3. Item and buyer counts are passed through correctly
-  it("3: preserves item and buyer counts in workspace output", () => {
-    const ws = deriveSaleWorkspace("Test", baseCounts({ itemCount: 42, buyerCount: 7, bundleCount: 0, unpaidCount: 0 }));
-    expect(ws.counts.itemCount).toBe(42);
-    expect(ws.counts.buyerCount).toBe(7);
+  // 6. /invoices/ belongs to Open buyer bundles
+  it("6: Open buyer bundles action links to /invoices/", () => {
+    const action = allActions.find((a) => a.id === "buyer-bundles");
+    expect(action).toBeDefined();
+    expect(action!.label).toBe("Open buyer bundles");
+    expect(action!.href).toBe("/invoices/");
   });
 
-  // 4. Facebook claims links to Claim Desk route
-  it("4: selling phase primary action points to /claims/", () => {
-    const ws = deriveSaleWorkspace("Test", baseCounts({ itemCount: 5, buyerCount: 5, bundleCount: 0 }));
-    expect(ws.phase).toBe("selling");
-    expect(ws.primaryActionHref).toBe("/claims/");
+  // 7. Empty state uses /events/
+  it("7: EMPTY_STATE_DESTINATION points to /events/", () => {
+    expect(EMPTY_STATE_DESTINATION.href).toBe("/events/");
+    expect(EMPTY_STATE_DESTINATION.label).toBeTruthy();
   });
 
-  // 5. Manual purchase links to clerking flow
-  it("5: setup phase primary action points to /lots/ when no items", () => {
-    const ws = deriveSaleWorkspace("Test", baseCounts({ itemCount: 0, buyerCount: 0 }));
-    expect(ws.primaryActionHref).toBe("/lots/");
-  });
-
-  // 6. Buyer Bundles link to existing invoice/bundle view
-  it("6: packing phase primary action points to /invoices/", () => {
-    const ws = deriveSaleWorkspace("Test", baseCounts({ itemCount: 10, buyerCount: 5, bundleCount: 2 }));
-    expect(ws.phase).toBe("packing");
-    expect(ws.primaryActionHref).toBe("/invoices/");
-  });
-
-  // 7. No internal Event/Bidder/Lot/Invoice labels appear in new copy
-  it("7: primaryActionLabel contains no internal domain labels", () => {
-    const phases: Array<{ itemCount: number; buyerCount: number; bundleCount: number }> = [
-      { itemCount: 0, buyerCount: 0, bundleCount: 0 },
-      { itemCount: 5, buyerCount: 0, bundleCount: 0 },
-      { itemCount: 5, buyerCount: 5, bundleCount: 0 },
-      { itemCount: 5, buyerCount: 5, bundleCount: 3 },
-    ];
-    for (const c of phases) {
-      const ws = deriveSaleWorkspace("Test", baseCounts(c));
+  // 8. No area label or action label contains internal domain terms
+  it("8: no area label or action label contains internal domain identifiers", () => {
+    for (const area of WORKSPACE_AREAS) {
       expect(
-        containsInternalLabel(ws.primaryActionLabel),
-        `"${ws.primaryActionLabel}" contains an internal label`
+        containsInternalLabel(area.label),
+        `area label "${area.label}" contains an internal identifier`
       ).toBe(false);
+      for (const action of area.actions) {
+        expect(
+          containsInternalLabel(action.label),
+          `action label "${action.label}" contains an internal identifier`
+        ).toBe(false);
+      }
     }
   });
 
-  // 8. No selected sale → workspace returns empty-state-safe output
-  it("8: deriveSaleWorkspace still returns a valid object with empty name", () => {
-    // When no sale is selected, the page renders an empty state without
-    // calling deriveSaleWorkspace; this test proves the function is safe
-    // if called with an empty string (defensive).
-    const ws = deriveSaleWorkspace("", baseCounts());
-    expect(ws.saleName).toBe("");
-    expect(ws.phase).toBe("setup");
-    expect(ws.primaryActionHref).toBeDefined();
-  });
-
-  // 9. Existing routes are referenced (not renamed)
-  it("9: all hrefs used by deriveSaleWorkspace are known existing routes", () => {
-    const knownRoutes = ["/lots/", "/bidders/", "/claims/", "/invoices/"];
-    const inputs: Array<WorkspaceCounts> = [
-      baseCounts({ itemCount: 0, buyerCount: 0, bundleCount: 0 }),
-      baseCounts({ itemCount: 5, buyerCount: 0, bundleCount: 0 }),
-      baseCounts({ itemCount: 5, buyerCount: 5, bundleCount: 0 }),
-      baseCounts({ itemCount: 5, buyerCount: 5, bundleCount: 2 }),
-    ];
-    for (const c of inputs) {
-      const ws = deriveSaleWorkspace("Test", c);
-      expect(knownRoutes).toContain(ws.primaryActionHref);
+  // 9. No packing state, Pack heading, unpaid, or phase terms in config
+  it("9: configuration contains no packing-state, Pack, unpaid, or phase language", () => {
+    const forbidden = ["pack", "unpaid", "phase", "setting up", "selling phase", "packing phase"];
+    const allText = [
+      ...WORKSPACE_AREAS.map((a) => a.label),
+      ...allActions.map((a) => a.label),
+      EMPTY_STATE_DESTINATION.label,
+    ].map((s) => s.toLowerCase());
+    for (const term of forbidden) {
+      for (const text of allText) {
+        expect(
+          text.includes(term),
+          `"${text}" contains forbidden term "${term}"`
+        ).toBe(false);
+      }
     }
   });
 
-  // 10. No domain service call is introduced — containsInternalLabel is a
-  //     pure string utility; verify it catches known identifiers and passes
-  //     clean seller-facing copy.
-  it("10: containsInternalLabel flags internal terms and passes seller copy", () => {
-    // Should flag
-    expect(containsInternalLabel("Event details")).toBe(true);
-    expect(containsInternalLabel("Bidder #5")).toBe(true);
-    expect(containsInternalLabel("Lot 12")).toBe(true);
-    expect(containsInternalLabel("Invoice #001")).toBe(true);
-
-    // Should pass
-    expect(containsInternalLabel("Add items to this sale")).toBe(false);
-    expect(containsInternalLabel("Add buyers to this sale")).toBe(false);
-    expect(containsInternalLabel("Open claim desk")).toBe(false);
-    expect(containsInternalLabel("Review buyer bundles")).toBe(false);
+  // 10. deriveWorkspaceCounts preserves saleName and counts without deriving workflow state
+  it("10: deriveWorkspaceCounts preserves saleName and counts; no phase field", () => {
+    const counts = baseCounts({ itemCount: 12, buyerCount: 7, buyerBundleCount: 3 });
+    const ws = deriveWorkspaceCounts("Summer Estate", counts);
+    expect(ws.saleName).toBe("Summer Estate");
+    expect(ws.counts.itemCount).toBe(12);
+    expect(ws.counts.buyerCount).toBe(7);
+    expect(ws.counts.buyerBundleCount).toBe(3);
+    // No phase field should exist on the returned object
+    expect((ws as Record<string, unknown>)["phase"]).toBeUndefined();
+    expect((ws as Record<string, unknown>)["primaryActionLabel"]).toBeUndefined();
+    expect((ws as Record<string, unknown>)["primaryActionHref"]).toBeUndefined();
   });
+
 });
