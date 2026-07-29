@@ -1,224 +1,270 @@
 "use client";
 
 import { useState } from "react";
+import { useLiveQuery } from "dexie-react-hooks";
 import Link from "next/link";
 import { Button } from "@/components/ui/Button";
+import { useUserDb } from "@/components/providers/UserDbProvider";
+import { liveQueryGuard } from "@/lib/dexie/liveQueryGuard";
 import {
   promoteClaim,
   cancelClaim,
   expireClaim,
+  confirmClaim,
   ClaimDomainError,
 } from "@/lib/services/claimService";
 import type { Claim } from "@/types/claim";
-import type { AuctionDB } from "@/lib/db";
-
-type Bidder = { id?: number; firstName: string; lastName: string; paddleNumber: number };
+import type { Lot } from "@/lib/db";
+import { ConfirmClaimPanel } from "./ConfirmClaimPanel";
 
 interface Props {
-  claims: Claim[];
-  bidders: Bidder[];
-  db: AuctionDB;
-  onActionDone: () => void;
-  onConfirmRequest: (claim: Claim) => void;
+  eventId: number;
+  lotId: number;
+  lot?: Lot;
+  onRefresh: () => void;
 }
 
-function statusBadge(status: Claim["status"]) {
-  const base = "inline-block rounded px-2 py-0.5 text-xs font-semibold";
-  switch (status) {
-    case "primary":
-      return <span className={`${base} bg-blue-100 text-blue-800 dark:bg-blue-900/40 dark:text-blue-300`}>Primary</span>;
-    case "promoted":
-      return <span className={`${base} bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300`}>Promoted ↑</span>;
-    case "backup":
-      return <span className={`${base} bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300`}>Backup #{}</span>;
-    default:
-      return <span className={`${base} bg-slate-100 text-slate-500`}>{status}</span>;
-  }
-}
+export function ClaimQueue({ eventId, lotId, lot, onRefresh }: Props) {
+  const { db } = useUserDb();
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [confirmingClaimId, setConfirmingClaimId] = useState<number | null>(null);
 
-export function ClaimQueue({ claims, bidders, db, onActionDone, onConfirmRequest }: Props) {
-  const [busy, setBusy] = useState<number | null>(null);
-  const [rowErrors, setRowErrors] = useState<Record<number, string>>({});
+  const claims = useLiveQuery(
+    async () =>
+      liveQueryGuard("claim.queue", async () => {
+        if (!db) return [];
+        const rows = await (db as unknown as { claims: import("dexie").Table<Claim> }).claims
+          .where("[eventId+lotId]")
+          .equals([eventId, lotId])
+          .toArray();
+        // Active queue: exclude canceled and expired
+        const active = rows.filter(
+          (c) => c.status !== "canceled" && c.status !== "expired"
+        );
+        // Sort: primary/promoted first (position 0), then backups ascending by position
+        active.sort((a, b) => a.position - b.position);
+        return active;
+      }, []),
+    [db, eventId, lotId]
+  );
 
-  const bMap = new Map(bidders.map((b) => [b.id!, b]));
-
-  // Sort: primary/promoted first, then backups by position
-  const sorted = [...claims].sort((a, b) => {
-    const rank = (c: Claim) =>
-      c.status === "primary" ? 0 : c.status === "promoted" ? 1 : 2;
-    const r = rank(a) - rank(b);
-    if (r !== 0) return r;
-    return a.position - b.position;
-  });
-
-  async function act(
-    claimId: number,
-    fn: () => Promise<void>
+  async function doAction(
+    action: "promote" | "cancel" | "expire",
+    claimId: number
   ) {
-    setBusy(claimId);
-    setRowErrors((prev) => { const n = { ...prev }; delete n[claimId]; return n; });
+    if (!db) return;
+    setActionError(null);
     try {
-      await fn();
-      onActionDone();
+      if (action === "promote") await promoteClaim(db, claimId);
+      else if (action === "cancel") await cancelClaim(db, claimId);
+      else await expireClaim(db, claimId);
+      onRefresh();
     } catch (err) {
-      const msg =
-        err instanceof ClaimDomainError
+      setActionError(
+        err instanceof ClaimDomainError || err instanceof Error
           ? err.message
-          : err instanceof Error
-          ? err.message
-          : "Action failed.";
-      setRowErrors((prev) => ({ ...prev, [claimId]: msg }));
-    } finally {
-      setBusy(null);
+          : "Action failed."
+      );
     }
   }
 
-  if (sorted.length === 0) {
-    return (
-      <p className="text-sm text-muted">
-        No active claims for this item.
-      </p>
-    );
-  }
+  if (!claims) return <p className="text-sm text-muted">Loading queue…</p>;
+  if (claims.length === 0)
+    return <p className="text-sm text-muted">No active claims for this item.</p>;
+
+  const confirmingClaim = confirmingClaimId != null
+    ? claims.find((c) => c.id === confirmingClaimId) ?? null
+    : null;
 
   return (
-    <div className="overflow-x-auto rounded-xl border border-navy/10 dark:border-slate-700">
-      <table className="w-full min-w-[640px] text-sm">
-        <thead className="bg-surface dark:bg-slate-800/80">
-          <tr>
-            <th className="px-3 py-2 text-left font-semibold text-navy dark:text-slate-200">Buyer</th>
-            <th className="px-3 py-2 text-left font-semibold text-navy dark:text-slate-200">Buyer code</th>
-            <th className="px-3 py-2 text-left font-semibold text-navy dark:text-slate-200">Status</th>
-            <th className="px-3 py-2 text-left font-semibold text-navy dark:text-slate-200">Pos</th>
-            <th className="px-3 py-2 text-left font-semibold text-navy dark:text-slate-200">Phrase</th>
-            <th className="px-3 py-2 text-left font-semibold text-navy dark:text-slate-200">Sale / Bundle</th>
-            <th className="px-3 py-2 text-right font-semibold text-navy dark:text-slate-200">Actions</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-navy/5 dark:divide-slate-700">
-          {sorted.map((c) => {
-            const bidder = bMap.get(c.bidderId);
-            const isConfirmed = c.saleId != null;
-            const isBusy = busy === c.id;
-            return (
-              <tr
-                key={c.id}
-                className="bg-white hover:bg-surface/60 dark:bg-slate-900 dark:hover:bg-slate-800/60"
-              >
-                {/* Buyer name */}
-                <td className="px-3 py-2 font-medium text-ink dark:text-slate-100">
-                  {bidder ? `${bidder.firstName} ${bidder.lastName}` : `Buyer #${c.bidderId}`}
-                </td>
-                {/* Buyer code */}
-                <td className="px-3 py-2 font-mono text-muted dark:text-slate-400">
-                  {bidder?.paddleNumber ?? "—"}
-                </td>
-                {/* Status badge */}
-                <td className="px-3 py-2">
-                  {c.status === "backup"
-                    ? <span className="inline-block rounded px-2 py-0.5 text-xs font-semibold bg-slate-100 text-slate-700 dark:bg-slate-700 dark:text-slate-300">Backup #{c.position}</span>
-                    : statusBadge(c.status)
-                  }
-                </td>
-                {/* Position */}
-                <td className="px-3 py-2 text-muted">
-                  {c.position > 0 ? c.position : "—"}
-                </td>
-                {/* Phrase */}
-                <td className="px-3 py-2 italic text-muted dark:text-slate-400">
-                  {c.phrase ?? "—"}
-                </td>
-                {/* Confirmed sale / bundle link */}
-                <td className="px-3 py-2">
-                  {isConfirmed ? (
-                    <span className="flex items-center gap-2">
-                      <span className="inline-block rounded px-2 py-0.5 text-xs font-semibold bg-green-100 text-green-800 dark:bg-green-900/40 dark:text-green-300">
-                        Confirmed
-                      </span>
-                      <Link
-                        href="/invoices/"
-                        className="text-xs text-navy underline hover:text-navy/70 dark:text-blue-400"
-                      >
-                        Buyer Bundle
-                      </Link>
-                    </span>
-                  ) : (
-                    <span className="text-muted">—</span>
-                  )}
-                </td>
-                {/* Actions */}
-                <td className="px-3 py-2">
-                  <div className="flex justify-end gap-2 flex-wrap">
-                    {/* Domain error for this row */}
-                    {rowErrors[c.id!] && (
-                      <span
-                        className="w-full text-right text-xs text-red-600 dark:text-red-400"
-                        role="alert"
-                      >
-                        {rowErrors[c.id!]}
-                      </span>
-                    )}
-                    {/* Promote — backup only */}
-                    {c.status === "backup" && (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        className="text-xs"
-                        disabled={isBusy}
-                        onClick={() =>
-                          void act(c.id!, () => promoteClaim(db, c.id!))
-                        }
-                      >
-                        Promote
-                      </Button>
-                    )}
-                    {/* Confirm — primary or promoted only */}
-                    {(c.status === "primary" || c.status === "promoted") &&
-                      !isConfirmed && (
-                        <Button
-                          type="button"
-                          className="text-xs"
-                          disabled={isBusy}
-                          onClick={() => onConfirmRequest(c)}
-                        >
-                          Confirm
-                        </Button>
-                      )}
-                    {/* Cancel — not confirmed */}
-                    {!isConfirmed && (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        className="text-xs"
-                        disabled={isBusy}
-                        onClick={() =>
-                          void act(c.id!, () => cancelClaim(db, c.id!))
-                        }
-                      >
-                        Cancel
-                      </Button>
-                    )}
-                    {/* Expire — not confirmed */}
-                    {!isConfirmed && (
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        className="text-xs"
-                        disabled={isBusy}
-                        onClick={() =>
-                          void act(c.id!, () => expireClaim(db, c.id!))
-                        }
-                      >
-                        Expire
-                      </Button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+    <div className="space-y-3">
+      {actionError && (
+        <p role="alert" className="rounded-lg bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/40 dark:text-red-400">
+          {actionError}
+        </p>
+      )}
+
+      {confirmingClaim && db && lot ? (
+        <ConfirmClaimPanel
+          db={db}
+          claim={confirmingClaim}
+          lot={lot}
+          onDone={() => {
+            setConfirmingClaimId(null);
+            onRefresh();
+          }}
+          onCancel={() => setConfirmingClaimId(null)}
+        />
+      ) : (
+        <ul className="space-y-2">
+          {claims.map((claim) => (
+            <ClaimRow
+              key={claim.id}
+              claim={claim}
+              eventId={eventId}
+              onPromote={() => void doAction("promote", claim.id!)}
+              onConfirm={() => setConfirmingClaimId(claim.id!)}
+              onCancel={() => void doAction("cancel", claim.id!)}
+              onExpire={() => void doAction("expire", claim.id!)}
+            />
+          ))}
+        </ul>
+      )}
     </div>
+  );
+}
+
+interface ClaimRowProps {
+  claim: Claim;
+  eventId: number;
+  onPromote: () => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+  onExpire: () => void;
+}
+
+function ClaimRow({
+  claim,
+  eventId,
+  onPromote,
+  onConfirm,
+  onCancel,
+  onExpire,
+}: ClaimRowProps) {
+  const { db } = useUserDb();
+
+  const bidder = useLiveQuery(
+    async () => {
+      if (!db) return null;
+      return db.bidders.get(claim.bidderId);
+    },
+    [db, claim.bidderId]
+  );
+
+  const sale = useLiveQuery(
+    async () => {
+      if (!db || claim.saleId == null) return null;
+      return db.sales.get(claim.saleId);
+    },
+    [db, claim.saleId]
+  );
+
+  const invoice = useLiveQuery(
+    async () => {
+      if (!db || claim.saleId == null || !sale) return null;
+      return db.invoices
+        .where("eventId")
+        .equals(eventId)
+        .filter((inv) => inv.bidderId === claim.bidderId)
+        .first();
+    },
+    [db, eventId, claim.bidderId, claim.saleId, sale]
+  );
+
+  const isConfirmed = claim.saleId != null;
+  const isPromoted = claim.status === "promoted";
+  const isPrimary = claim.status === "primary";
+  const isBackup = claim.status === "backup";
+
+  const statusLabel = isConfirmed
+    ? "Confirmed — owns item"
+    : isPromoted
+    ? "Promoted"
+    : isPrimary
+    ? "Primary"
+    : `Backup #${claim.position}`;
+
+  return (
+    <li className="rounded-lg border border-navy/10 bg-white p-3 dark:border-slate-700 dark:bg-slate-800">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1 space-y-0.5">
+          <p className="text-sm font-medium text-ink dark:text-slate-100">
+            {bidder
+              ? `${bidder.firstName} ${bidder.lastName}`
+              : `Buyer #${claim.bidderId}`}
+            {bidder && (
+              <span className="ml-2 text-xs text-muted">
+                code: {bidder.paddleNumber}
+              </span>
+            )}
+          </p>
+          <p className="text-xs text-muted">
+            <span
+              className={`font-medium ${
+                isConfirmed
+                  ? "text-green-700 dark:text-green-400"
+                  : isPromoted
+                  ? "text-blue-700 dark:text-blue-400"
+                  : ""
+              }`}
+            >
+              {statusLabel}
+            </span>
+            {claim.phrase && (
+              <span className="ml-2 italic">&ldquo;{claim.phrase}&rdquo;</span>
+            )}
+          </p>
+          {isConfirmed && sale && (
+            <p className="text-xs text-green-700 dark:text-green-400">
+              Sale price: {sale.amount}
+              {invoice?.id != null && (
+                <>
+                  {" · "}
+                  <Link
+                    href={`/invoices/`}
+                    className="underline hover:no-underline"
+                  >
+                    View Buyer Bundle
+                  </Link>
+                </>
+              )}
+            </p>
+          )}
+        </div>
+
+        {/* Actions */}
+        {!isConfirmed && (
+          <div className="flex shrink-0 flex-wrap gap-1">
+            {isBackup && (
+              <Button
+                type="button"
+                variant="secondary"
+                className="text-xs py-1 px-2"
+                onClick={onPromote}
+              >
+                Promote
+              </Button>
+            )}
+            {(isPrimary || isPromoted) && (
+              <Button
+                type="button"
+                className="text-xs py-1 px-2"
+                onClick={onConfirm}
+              >
+                Confirm
+              </Button>
+            )}
+            <Button
+              type="button"
+              variant="secondary"
+              className="text-xs py-1 px-2"
+              onClick={onCancel}
+            >
+              Cancel
+            </Button>
+            {isBackup && (
+              <Button
+                type="button"
+                variant="secondary"
+                className="text-xs py-1 px-2"
+                onClick={onExpire}
+              >
+                Expire
+              </Button>
+            )}
+          </div>
+        )}
+      </div>
+    </li>
   );
 }
