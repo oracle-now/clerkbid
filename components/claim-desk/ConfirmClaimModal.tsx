@@ -5,11 +5,12 @@ import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { useUserDb } from "@/components/providers/UserDbProvider";
-import { confirmClaim, ClaimDomainError } from "@/lib/services/claimService";
+import { confirmClaim } from "@/lib/services/claimService";
 import {
   round2,
   validateConfirmForm,
 } from "@/lib/claimDeskHelpers";
+import { sellerReadableError } from "./claimDeskCopy";
 import type { Claim } from "@/types/claim";
 import type { Lot, Bidder } from "@/lib/db";
 
@@ -62,7 +63,6 @@ export function ConfirmClaimModal({
       return;
     }
 
-    // Re-verify lot and bidder still belong to this event
     const freshLot = lot.id != null ? await db.lots.get(lot.id) : undefined;
     const freshBidder =
       bidder?.id != null ? await db.bidders.get(bidder.id) : undefined;
@@ -105,13 +105,7 @@ export function ConfirmClaimModal({
 
       onConfirmed(invoiceId);
     } catch (err) {
-      const msg =
-        err instanceof ClaimDomainError
-          ? err.message
-          : err instanceof Error
-          ? err.message
-          : "Confirmation failed.";
-      setSubmitErr(msg);
+      setSubmitErr(sellerReadableError(err));
     } finally {
       setBusy(false);
     }
@@ -124,7 +118,7 @@ export function ConfirmClaimModal({
   return (
     <Modal
       open={open}
-      title="Confirm claim"
+      title="Confirm sale"
       onClose={onClose}
       maxWidthClass="max-w-md"
       footer={
@@ -166,6 +160,7 @@ export function ConfirmClaimModal({
 
       {/* Editable fields */}
       <div className="space-y-4">
+        {/* min text-base (16px) prevents iOS auto-zoom on input focus */}
         <Input
           id={priceId}
           label={`Sale price per item (${currencySymbol})`}
@@ -176,6 +171,7 @@ export function ConfirmClaimModal({
           value={priceStr}
           onChange={(e) => setPriceStr(e.target.value)}
           error={priceErr}
+          className="text-base"
           autoFocus
         />
         {priceStr && Number.isFinite(parseFloat(priceStr)) && parseFloat(priceStr) >= 0 && (
