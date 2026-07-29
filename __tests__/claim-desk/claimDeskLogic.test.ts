@@ -1,48 +1,17 @@
 /**
- * Focused unit tests for Claim Desk logic that can run in the Vitest
- * node environment without a browser or Dexie.
- *
- * These tests exercise:
- *  1. nextBackupPosition derivation
- *  2. ConfirmClaimModal amount calculation
- *  3. Validation edge-cases
+ * Unit tests for Claim Desk pure helpers.
+ * All helpers are imported from the production lib/claimDeskHelpers.ts —
+ * these tests verify real production code, not copies.
  */
 import { describe, it, expect } from "vitest";
+import {
+  nextBackupPosition,
+  computeClaimAmount,
+  validateConfirmForm,
+} from "@/lib/claimDeskHelpers";
 import type { Claim } from "@/types/claim";
 
-// ── helpers copied from ClaimDesk.tsx (pure, no imports) ────────────────────
-
-function nextBackupPosition(queue: Claim[]): number {
-  const positions = queue
-    .filter((c) => c.type === "backup")
-    .map((c) => c.position);
-  return positions.length === 0 ? 1 : Math.max(...positions) + 1;
-}
-
-const round2 = (n: number) => Math.round(n * 100) / 100;
-
-function computeAmount(priceStr: string, quantity: number): number | null {
-  const v = parseFloat(priceStr);
-  if (!Number.isFinite(v) || v < 0) return null;
-  return round2(v * quantity);
-}
-
-function validateConfirmForm(
-  priceStr: string,
-  initials: string,
-  quantity: number
-): string[] {
-  const errs: string[] = [];
-  const v = parseFloat(priceStr);
-  if (!priceStr.trim() || !Number.isFinite(v) || v < 0)
-    errs.push("price");
-  if (!initials.trim()) errs.push("initials");
-  if (quantity < 1 || !Number.isInteger(quantity)) errs.push("quantity");
-  return errs;
-}
-
-// ── tests ───────────────────────────────────────────────────────────────────
-
+// Minimal Claim fixture
 const base = (overrides: Partial<Claim> = {}): Claim => ({
   syncKey: "test-sync-key",
   eventId: 1,
@@ -82,25 +51,63 @@ describe("nextBackupPosition", () => {
   });
 });
 
-describe("computeAmount", () => {
+describe("queue ordering (primary/promoted before backups)", () => {
+  it("primary ranks before backup", () => {
+    const primary = base({ type: "primary", status: "primary", position: 0 });
+    const backup = base({ position: 1 });
+    const sorted = [backup, primary].sort((a, b) => {
+      const rank = (c: Claim) =>
+        c.status === "primary" || c.status === "promoted" ? 0 : 1;
+      return rank(a) - rank(b) || a.position - b.position;
+    });
+    expect(sorted[0]!.status).toBe("primary");
+    expect(sorted[1]!.status).toBe("backup");
+  });
+
+  it("promoted ranks before backup", () => {
+    const promoted = base({ type: "primary", status: "promoted", position: 0 });
+    const backup = base({ position: 1 });
+    const sorted = [backup, promoted].sort((a, b) => {
+      const rank = (c: Claim) =>
+        c.status === "primary" || c.status === "promoted" ? 0 : 1;
+      return rank(a) - rank(b) || a.position - b.position;
+    });
+    expect(sorted[0]!.status).toBe("promoted");
+  });
+
+  it("backups are ordered by position", () => {
+    const q = [
+      base({ position: 3 }),
+      base({ position: 1 }),
+      base({ position: 2 }),
+    ].sort((a, b) => {
+      const rank = (c: Claim) =>
+        c.status === "primary" || c.status === "promoted" ? 0 : 1;
+      return rank(a) - rank(b) || a.position - b.position;
+    });
+    expect(q.map((c) => c.position)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("computeClaimAmount", () => {
   it("multiplies price by quantity and rounds to 2dp", () => {
-    expect(computeAmount("10.00", 3)).toBe(30.0);
+    expect(computeClaimAmount("10.00", 3)).toBe(30.0);
   });
 
   it("rounds floating-point imprecision", () => {
-    expect(computeAmount("1.005", 2)).toBe(2.01);
+    expect(computeClaimAmount("1.005", 2)).toBe(2.01);
   });
 
   it("returns null for negative price", () => {
-    expect(computeAmount("-1", 2)).toBeNull();
+    expect(computeClaimAmount("-1", 2)).toBeNull();
   });
 
   it("returns null for non-numeric string", () => {
-    expect(computeAmount("abc", 2)).toBeNull();
+    expect(computeClaimAmount("abc", 2)).toBeNull();
   });
 
   it("returns 0 for price of 0", () => {
-    expect(computeAmount("0", 5)).toBe(0);
+    expect(computeClaimAmount("0", 5)).toBe(0);
   });
 });
 

@@ -14,15 +14,16 @@ const STATUS_LABELS: Record<Claim["status"], string> = {
   expired: "Expired",
 };
 
-const STATUS_VARIANT: Record<
+/** Map each claim status to the Badge `tone` prop. */
+const STATUS_TONE: Record<
   Claim["status"],
-  "default" | "success" | "warning" | "danger" | "muted"
+  "neutral" | "success" | "warning" | "danger"
 > = {
   primary: "success",
   promoted: "warning",
-  backup: "default",
-  canceled: "muted",
-  expired: "muted",
+  backup: "neutral",
+  canceled: "neutral",
+  expired: "neutral",
 };
 
 interface Props {
@@ -48,8 +49,9 @@ export function ClaimQueueItem({
   const isTerminal = claim.status === "canceled" || claim.status === "expired";
   const canPromote = claim.status === "backup";
   const canConfirm = claim.status === "primary" || claim.status === "promoted";
+  // A claim that is already confirmed (saleId set) should not expose Cancel/Expire.
   const canCancel = !isTerminal && claim.saleId == null;
-  const canExpire = claim.status === "backup";
+  const canExpire = claim.status === "backup" && claim.saleId == null;
 
   const buyerName = bidder
     ? `${bidder.firstName} ${bidder.lastName}`
@@ -61,7 +63,7 @@ export function ClaimQueueItem({
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
-            <Badge variant={STATUS_VARIANT[claim.status]}>
+            <Badge tone={STATUS_TONE[claim.status]}>
               {STATUS_LABELS[claim.status]}
             </Badge>
             {claim.type === "backup" && claim.position > 0 && (

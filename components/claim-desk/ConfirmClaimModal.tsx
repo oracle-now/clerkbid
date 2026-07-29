@@ -6,6 +6,10 @@ import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/Input";
 import { useUserDb } from "@/components/providers/UserDbProvider";
 import { confirmClaim, ClaimDomainError } from "@/lib/services/claimService";
+import {
+  round2,
+  validateConfirmForm,
+} from "@/lib/claimDeskHelpers";
 import type { Claim } from "@/types/claim";
 import type { Lot, Bidder } from "@/lib/db";
 
@@ -18,8 +22,6 @@ interface Props {
   onClose: () => void;
   onConfirmed: (invoiceId: number | null | undefined) => void;
 }
-
-const round2 = (n: number) => Math.round(n * 100) / 100;
 
 export function ConfirmClaimModal({
   open,
@@ -42,31 +44,19 @@ export function ConfirmClaimModal({
   const [submitErr, setSubmitErr] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const validate = (): boolean => {
-    let ok = true;
-    const priceVal = parseFloat(priceStr);
-    if (!priceStr.trim() || !Number.isFinite(priceVal) || priceVal < 0) {
-      setPriceErr("Enter a valid non-negative sale price.");
-      ok = false;
-    } else {
-      setPriceErr("");
-    }
-    if (!initials.trim()) {
-      setInitialsErr("Seller initials are required.");
-      ok = false;
-    } else {
-      setInitialsErr("");
-    }
-    if (lot.quantity < 1 || !Number.isInteger(lot.quantity)) {
+  const runValidation = (): boolean => {
+    const errs = validateConfirmForm(priceStr, initials, lot.quantity);
+    setPriceErr(errs.includes("price") ? "Enter a valid non-negative sale price." : "");
+    setInitialsErr(errs.includes("initials") ? "Seller initials are required." : "");
+    if (errs.includes("quantity")) {
       setSubmitErr("Item quantity must be a positive integer.");
-      ok = false;
     }
-    return ok;
+    return errs.length === 0;
   };
 
   const handleSubmit = async () => {
     setSubmitErr("");
-    if (!validate()) return;
+    if (!runValidation()) return;
     if (!db) {
       setSubmitErr("Database not ready.");
       return;
@@ -86,8 +76,7 @@ export function ConfirmClaimModal({
       return;
     }
 
-    const pricePerItem = parseFloat(priceStr);
-    const amount = round2(pricePerItem * freshLot.quantity);
+    const amount = round2(parseFloat(priceStr) * freshLot.quantity);
 
     setBusy(true);
     try {
@@ -102,7 +91,6 @@ export function ConfirmClaimModal({
         clerkInitials: initials.trim(),
       });
 
-      // Resolve the invoice that was upserted for this buyer
       let invoiceId: number | null = null;
       if (sale.invoiceId != null) {
         invoiceId = sale.invoiceId;
@@ -207,7 +195,10 @@ export function ConfirmClaimModal({
       </div>
 
       {submitErr && (
-        <p className="mt-4 rounded-lg bg-danger/10 px-4 py-2 text-sm text-danger" role="alert">
+        <p
+          className="mt-4 rounded-lg bg-red-50 px-4 py-2 text-sm text-danger dark:bg-red-950/40 dark:text-red-300"
+          role="alert"
+        >
           {submitErr}
         </p>
       )}

@@ -18,6 +18,7 @@ import {
   promoteClaim,
   ClaimDomainError,
 } from "@/lib/services/claimService";
+import { nextBackupPosition } from "@/lib/claimDeskHelpers";
 import { ClaimQueueItem } from "./ClaimQueueItem";
 import { ConfirmClaimModal } from "./ConfirmClaimModal";
 
@@ -73,6 +74,7 @@ export function ClaimDesk({ eventId, event }: Props) {
             .equals([eventId, selectedLotId])
             .toArray();
           return rows.sort((a, b) => {
+            // primary/promoted first, then backups, then by position
             const rank = (c: Claim) =>
               c.status === "primary" || c.status === "promoted" ? 0 : 1;
             const r = rank(a) - rank(b);
@@ -88,13 +90,10 @@ export function ClaimDesk({ eventId, event }: Props) {
   const selectedLot = lots?.find((l) => l.id === selectedLotId) ?? null;
   const selectedBidder = bidders?.find((b) => b.id === selectedBidderId) ?? null;
 
-  const nextBackupPosition = useCallback(() => {
-    if (!queue) return 1;
-    const positions = queue
-      .filter((c) => c.type === "backup")
-      .map((c) => c.position);
-    return positions.length === 0 ? 1 : Math.max(...positions) + 1;
-  }, [queue]);
+  const getNextBackupPosition = useCallback(
+    () => nextBackupPosition(queue ?? []),
+    [queue]
+  );
 
   const wrap = useCallback(
     async (fn: () => Promise<void>) => {
@@ -136,7 +135,7 @@ export function ClaimDesk({ eventId, event }: Props) {
         eventId,
         lotId: selectedLotId,
         bidderId: selectedBidderId,
-        position: nextBackupPosition(),
+        position: getNextBackupPosition(),
         phrase: phrase.trim() || undefined,
       });
       setPhrase("");
