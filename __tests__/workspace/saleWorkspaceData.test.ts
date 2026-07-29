@@ -133,10 +133,12 @@ describe("saleWorkspaceData", () => {
     expect(ws.counts.itemCount).toBe(12);
     expect(ws.counts.buyerCount).toBe(7);
     expect(ws.counts.buyerBundleCount).toBe(3);
-    // No phase field should exist on the returned object
-    expect((ws as Record<string, unknown>)["phase"]).toBeUndefined();
-    expect((ws as Record<string, unknown>)["primaryActionLabel"]).toBeUndefined();
-    expect((ws as Record<string, unknown>)["primaryActionHref"]).toBeUndefined();
+    // WorkspaceData has no index signature; cast through unknown to satisfy
+    // strict overlap check before asserting absent fields.
+    const wsAny = ws as unknown as Record<string, unknown>;
+    expect(wsAny["phase"]).toBeUndefined();
+    expect(wsAny["primaryActionLabel"]).toBeUndefined();
+    expect(wsAny["primaryActionHref"]).toBeUndefined();
   });
 
 });
