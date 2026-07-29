@@ -7,6 +7,7 @@ import type {
   Lot,
   Sale,
 } from "@/lib/db";
+import type { Claim } from "@/types/claim";
 import { withCloudSyncApply } from "@/lib/db/syncApplyGuard";
 import { APP_VERSION } from "@/lib/utils/constants";
 import { newEntitySyncKey } from "@/lib/utils/clientSyncKey";
@@ -15,7 +16,9 @@ import { newEventSyncId } from "@/lib/utils/syncId";
 import { forgetDeletedCloudEventSyncId } from "@/lib/services/cloudDeleteTombstone";
 import { roundMoney } from "@/lib/services/invoiceLogic";
 
-export const EXPORT_VERSION = 6;
+export const EXPORT_VERSION = 7;
+/** Previous export (no claims). */
+export const EXPORT_VERSION_6 = 6;
 /** Previous export (no sale/invoice syncKey). */
 export const EXPORT_VERSION_5 = 5;
 export const EXPORT_VERSION_LEGACY = 1;
@@ -39,6 +42,22 @@ export type EventExportEventShape = Omit<
   buyersPremiumRate?: number;
   /** v2 and earlier omit; default 0 on import */
   defaultConsignorCommissionRate?: number;
+};
+
+/** Serialised Claim row in the export payload (v7+). */
+export type ClaimExportShape = Omit<
+  Claim,
+  "id" | "eventId" | "lotId" | "bidderId" | "saleId" | "createdAt" | "updatedAt"
+> & {
+  legacyId?: number;
+  /** Maps to bidders.legacyId on re-import. */
+  legacyBidderId?: number;
+  /** Maps to lots.legacyId on re-import. */
+  legacyLotId?: number;
+  /** Maps to sales.legacyId on re-import (set only when confirmed). */
+  legacySaleId?: number | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
 export type EventExportPayload = {
@@ -98,6 +117,12 @@ export type EventExportPayload = {
       syncKey?: string;
     }
   >;
+  /**
+   * Facebook claim records (v7+).
+   * Optional so that v1–v6 exports (which lack this array) import cleanly;
+   * missing or undefined is treated as an empty array on import.
+   */
+  claims?: ClaimExportShape[];
 };
 
 /** IndexedDB may return Date or ISO string depending on engine / migration path. */
@@ -136,6 +161,7 @@ export async function buildEventExport(
   const lots = await db.lots.where("eventId").equals(eventId).toArray();
   const sales = await db.sales.where("eventId").equals(eventId).toArray();
   const invoices = await db.invoices.where("eventId").equals(eventId).toArray();
+  const claims = await db.claims.where("eventId").equals(eventId).toArray();
 
   const {
     id: _eid,
@@ -209,6 +235,27 @@ export async function buildEventExport(
         ...(inv.syncKey ? { syncKey: inv.syncKey } : {}),
       };
     }),
+    claims: claims.map((c) => {
+      const {
+        id: cid,
+        eventId: _ev,
+        lotId,
+        bidderId,
+        saleId,
+        createdAt,
+        updatedAt,
+        ...rest
+      } = c;
+      return {
+        ...rest,
+        legacyId: cid,
+        legacyBidderId: bidderId,
+        legacyLotId: lotId,
+        ...(saleId != null ? { legacySaleId: saleId } : { legacySaleId: null }),
+        createdAt: isoFromStored(createdAt, "claim.createdAt"),
+        updatedAt: isoFromStored(updatedAt, "claim.updatedAt"),
+      } satisfies ClaimExportShape;
+    }),
   };
 }
 
@@ -238,6 +285,7 @@ export function parseEventExportPayload(raw: unknown): EventExportPayload {
   const v = o.exportVersion;
   if (
     v !== EXPORT_VERSION &&
+    v !== EXPORT_VERSION_6 &&
     v !== EXPORT_VERSION_5 &&
     v !== EXPORT_VERSION_4 &&
     v !== EXPORT_VERSION_3 &&
@@ -257,12 +305,17 @@ export function parseEventExportPayload(raw: unknown): EventExportPayload {
   const consignors = Array.isArray(o.consignors)
     ? o.consignors
     : ([] as EventExportPayload["consignors"]);
+  // claims is optional; v1–v6 exports omit it — default to undefined (treated as empty).
+  const claims = Array.isArray(o.claims)
+    ? (o.claims as ClaimExportShape[])
+    : undefined;
   return {
     ...(o as EventExportPayload),
     exportVersion: v as number,
     consignors,
     sales: sales as EventExportPayload["sales"],
     invoices: invoices as EventExportPayload["invoices"],
+    claims,
   };
 }
 
@@ -273,6 +326,7 @@ export type ImportSummary = {
   lots: number;
   sales: number;
   invoices: number;
+  claims: number;
 };
 
 export type FullDatabaseExport = {
@@ -614,6 +668,76 @@ async function insertChildrenForEvent(
       .modify({ invoiceId: onlyId });
   }
 
+  // -------------------------------------------------------------------------
+  // Claims (v7+): remap bidderId, lotId, and saleId to new local IDs.
+  // Old exports (v1–v6) have no claims array; skip gracefully.
+  //
+  // Reference integrity rules (ADR-001 §6.2):
+  //   - Missing bidder  → visible import error
+  //   - Missing lot     → visible import error
+  //   - legacySaleId non-null but no mapping → visible import error
+  //     (do NOT silently set saleId=null; a confirmed Claim must link
+  //     to its Sale or the import is corrupt)
+  // -------------------------------------------------------------------------
+  let claimCount = 0;
+  const claimRows = payload.claims ?? [];
+  for (let ci = 0; ci < claimRows.length; ci++) {
+    const c = claimRows[ci];
+    const {
+      legacyId: _cid,
+      legacyBidderId,
+      legacyLotId,
+      legacySaleId,
+      createdAt,
+      updatedAt,
+      ...rest
+    } = c;
+
+    const newBidderId =
+      legacyBidderId != null ? bidderMap.get(legacyBidderId) : undefined;
+    if (newBidderId == null) {
+      throw new Error(
+        `Claim[${ci}] references unknown bidder (legacyBidderId=${legacyBidderId}) — ` +
+          "export may be incomplete or corrupt."
+      );
+    }
+
+    const newLotId =
+      legacyLotId != null ? lotMap.get(legacyLotId) : undefined;
+    if (newLotId == null) {
+      throw new Error(
+        `Claim[${ci}] references unknown lot (legacyLotId=${legacyLotId}) — ` +
+          "export may be incomplete or corrupt."
+      );
+    }
+
+    // legacySaleId non-null means this Claim was confirmed; the Sale must
+    // have been exported and imported, so the mapping MUST exist.
+    // Silently falling back to null would hide data corruption.
+    let newSaleId: number | null = null;
+    if (legacySaleId != null) {
+      const mapped = saleLegacyMap.get(legacySaleId);
+      if (mapped == null) {
+        throw new Error(
+          `Claim[${ci}] references Sale legacyId=${legacySaleId} which was not found ` +
+            "in the imported sales — export may be incomplete or corrupt."
+        );
+      }
+      newSaleId = mapped;
+    }
+
+    await db.claims.add({
+      ...rest,
+      eventId,
+      bidderId: newBidderId,
+      lotId: newLotId,
+      saleId: newSaleId,
+      createdAt: parseDate(createdAt),
+      updatedAt: parseDate(updatedAt),
+    });
+    claimCount++;
+  }
+
   return {
     eventId,
     bidders: payload.bidders.length,
@@ -621,6 +745,7 @@ async function insertChildrenForEvent(
     lots: payload.lots.length,
     sales: payload.sales.length,
     invoices: payload.invoices.length,
+    claims: claimCount,
   };
 }
 
@@ -639,6 +764,7 @@ export async function importEventFromPayload(
         db.lots,
         db.sales,
         db.invoices,
+        db.claims,
         db.deletedCloudSyncTombstones,
       ],
       async () => {
@@ -698,6 +824,7 @@ export async function replaceEventFromPayload(
         db.lots,
         db.sales,
         db.invoices,
+        db.claims,
         db.syncOutbox,
         db.syncState,
         db.syncConflicts,
@@ -717,6 +844,7 @@ export async function replaceEventFromPayload(
       await db.syncState.delete(payloadSyncId);
       await db.syncConflicts.where("eventSyncId").equals(payloadSyncId).delete();
 
+      await db.claims.where("eventId").equals(eventId).delete();
       await db.invoices.where("eventId").equals(eventId).delete();
       await db.sales.where("eventId").equals(eventId).delete();
       await db.lots.where("eventId").equals(eventId).delete();

@@ -3,6 +3,7 @@ import { registerParentEventTouchHooks } from "@/lib/db/parentEventTouchHooks";
 import { withCloudSyncApply } from "@/lib/db/syncApplyGuard";
 import { newEntitySyncKey } from "@/lib/utils/clientSyncKey";
 import { newEventSyncId } from "@/lib/utils/syncId";
+import type { Claim } from "@/types/claim";
 
 /** Pre–per-user DB; migrated once into the signed-in user's database. */
 export const LEGACY_DB_NAME = "AuctionManagerDB";
@@ -63,6 +64,22 @@ const STORE_DEF_V10 = {
   ...STORE_DEF_V9,
   /** User deleted this cloud sync id locally; do not pull it from the server again. */
   deletedCloudSyncTombstones: "&eventSyncId, deletedAt",
+} as const;
+
+/**
+ * V11 — adds the `claims` table for Facebook claim-sale lifecycle.
+ * No migration needed: claims is a new table with no seed data.
+ * Schema decision recorded here per AGENTS.md schema-change requirement.
+ */
+const STORE_DEF_V11 = {
+  ...STORE_DEF_V10,
+  /**
+   * claims: Facebook live-sale Claim records.
+   * Indices: eventId (list all claims for an event), lotId, bidderId,
+   * status (filter active/terminal), [eventId+lotId] (uniqueness check).
+   */
+  claims:
+    "++id, syncKey, eventId, lotId, bidderId, status, [eventId+lotId]",
 } as const;
 
 export function sanitizeUserIdForDbName(userId: string): string {
@@ -263,6 +280,8 @@ export class AuctionDB extends Dexie {
   syncState!: Table<SyncStateRow>;
   syncConflicts!: Table<SyncConflictRow>;
   deletedCloudSyncTombstones!: Table<DeletedCloudSyncTombstone>;
+  /** Facebook live-sale claims (ADR-001). Added in schema v11. */
+  claims!: Table<Claim>;
 
   constructor(userId: string | number) {
     super(userDexieDatabaseName(userId));
@@ -380,6 +399,13 @@ export class AuctionDB extends Dexie {
         });
       });
     this.version(10).stores(STORE_DEF_V10);
+    /**
+     * Version 11 — adds claims table.
+     * No data migration required: this is a brand-new table.
+     * Schema-version decision: increment (not new-table-only approach)
+     * because Dexie requires a version bump whenever the store list changes.
+     */
+    this.version(11).stores(STORE_DEF_V11);
     registerParentEventTouchHooks(this);
   }
 }
