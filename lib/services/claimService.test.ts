@@ -244,9 +244,14 @@ describe("confirmClaim", () => {
       bidderId,
       position: 1,
     });
-    await expect(
-      confirmClaim(db, claim.id!, saleInputFor())
-    ).rejects.toThrow("BACKUP_NOT_PROMOTED" as unknown as ClaimDomainError);
+    let caught: unknown;
+    try {
+      await confirmClaim(db, claim.id!, saleInputFor());
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ClaimDomainError);
+    expect((caught as ClaimDomainError).code).toBe("BACKUP_NOT_PROMOTED");
   });
 
   it("rejects second active owner for the same (eventId, lotId)", async () => {
