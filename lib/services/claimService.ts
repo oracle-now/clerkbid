@@ -16,9 +16,7 @@
  *   If a confirmed Sale for (eventId, lotId) has not been voided,
  *   confirmClaim will throw ACTIVE_SALE_EXISTS rather than silently
  *   overwrite it. A void/correction workflow (ADR-3 / PR-G) is required
- *   before a replacement owner can be confirmed.  The Sale.status=voided
- *   state is managed by calling code that explicitly sets it; this service
- *   reads but does not write Sale.status beyond what createSale already does.
+ *   before a replacement owner can be confirmed. This service cannot void Sales.
  */
 import type { AuctionDB, Sale } from "@/lib/db";
 import type { Claim } from "@/types/claim";
@@ -30,9 +28,9 @@ import { upsertInvoiceForBidder } from "@/lib/services/invoiceLogic";
 // ---------------------------------------------------------------------------
 
 export type ClaimErrorCode =
-  | "BACKUP_NOT_PROMOTED"      // confirmClaim called on backup before promotion
-  | "ACTIVE_SALE_EXISTS"       // second owner attempt for same (eventId, lotId)
-  | "CLAIM_ALREADY_CONFIRMED" // internal guard (should not reach caller)
+  | "BACKUP_NOT_PROMOTED"       // confirmClaim called on backup before promotion
+  | "ACTIVE_SALE_EXISTS"        // second owner attempt for same (eventId, lotId)
+  | "CLAIM_ALREADY_CONFIRMED"  // internal guard (should not reach caller)
   | "CLAIM_NOT_FOUND"
   | "INVALID_TRANSITION";
 
@@ -47,11 +45,17 @@ export class ClaimDomainError extends Error {
 }
 
 // ---------------------------------------------------------------------------
-// Helpers
+// Internal helpers
 // ---------------------------------------------------------------------------
 
+type ClaimsTable = import("dexie").Table<Claim>;
+
+function claimsTable(db: AuctionDB): ClaimsTable {
+  return (db as unknown as { claims: ClaimsTable }).claims;
+}
+
 async function getClaimOrThrow(db: AuctionDB, claimId: number): Promise<Claim> {
-  const c = await (db as unknown as { claims: { get(id: number): Promise<Claim | undefined> } }).claims.get(claimId);
+  const c = await claimsTable(db).get(claimId);
   if (!c) throw new ClaimDomainError("CLAIM_NOT_FOUND", `Claim ${claimId} not found`);
   return c;
 }
@@ -85,8 +89,7 @@ export async function createPrimary(
     createdAt: now,
     updatedAt: now,
   };
-  const claimsTable = (db as unknown as { claims: import("dexie").Table<Claim> }).claims;
-  const id = (await claimsTable.add(row)) as number;
+  const id = (await claimsTable(db).add(row)) as number;
   return { ...row, id };
 }
 
@@ -116,8 +119,7 @@ export async function createBackup(
     createdAt: now,
     updatedAt: now,
   };
-  const claimsTable = (db as unknown as { claims: import("dexie").Table<Claim> }).claims;
-  const id = (await claimsTable.add(row)) as number;
+  const id = (await claimsTable(db).add(row)) as number;
   return { ...row, id };
 }
 
@@ -125,18 +127,41 @@ export async function createBackup(
 // State transitions
 // ---------------------------------------------------------------------------
 
+/**
+ * Cancel a Claim.
+ * - Idempotent for already-canceled / already-expired.
+ * - Rejected with INVALID_TRANSITION when the Claim has a linked Sale
+ *   (correction of confirmed ownership requires ADR-3 / PR-G).
+ */
 export async function cancelClaim(db: AuctionDB, claimId: number): Promise<void> {
   const c = await getClaimOrThrow(db, claimId);
-  if (c.status === "canceled" || c.status === "expired") return; // already terminal
-  const claimsTable = (db as unknown as { claims: import("dexie").Table<Claim> }).claims;
-  await claimsTable.update(claimId, { status: "canceled", updatedAt: new Date() });
+  if (c.status === "canceled" || c.status === "expired") return;
+  if (c.saleId != null) {
+    throw new ClaimDomainError(
+      "INVALID_TRANSITION",
+      `Cannot cancel Claim ${claimId}: it has a confirmed Sale (saleId=${c.saleId}). ` +
+        "Correction of confirmed ownership requires ADR-3 / PR-G."
+    );
+  }
+  await claimsTable(db).update(claimId, { status: "canceled", updatedAt: new Date() });
 }
 
+/**
+ * Expire a backup Claim.
+ * - Idempotent for already-canceled / already-expired.
+ * - Rejected with INVALID_TRANSITION when the Claim has a linked Sale.
+ */
 export async function expireClaim(db: AuctionDB, claimId: number): Promise<void> {
   const c = await getClaimOrThrow(db, claimId);
   if (c.status === "canceled" || c.status === "expired") return;
-  const claimsTable = (db as unknown as { claims: import("dexie").Table<Claim> }).claims;
-  await claimsTable.update(claimId, { status: "expired", updatedAt: new Date() });
+  if (c.saleId != null) {
+    throw new ClaimDomainError(
+      "INVALID_TRANSITION",
+      `Cannot expire Claim ${claimId}: it has a confirmed Sale (saleId=${c.saleId}). ` +
+        "Correction of confirmed ownership requires ADR-3 / PR-G."
+    );
+  }
+  await claimsTable(db).update(claimId, { status: "expired", updatedAt: new Date() });
 }
 
 /**
@@ -151,8 +176,7 @@ export async function promoteClaim(db: AuctionDB, claimId: number): Promise<void
       `Cannot promote Claim ${claimId}: status is ${c.status}`
     );
   }
-  const claimsTable = (db as unknown as { claims: import("dexie").Table<Claim> }).claims;
-  await claimsTable.update(claimId, { status: "promoted", updatedAt: new Date() });
+  await claimsTable(db).update(claimId, { status: "promoted", updatedAt: new Date() });
 }
 
 // ---------------------------------------------------------------------------
@@ -168,24 +192,19 @@ export interface ConfirmClaimResult {
 /**
  * Confirm a primary or promoted Claim as the owner of a lot.
  *
- * Invariants enforced:
- *   - Backup (not promoted) cannot be confirmed (ADR-001 §2.5).
+ * Valid entry statuses: "primary", "promoted".
+ * Rejected statuses:
+ *   "backup"   → BACKUP_NOT_PROMOTED
+ *   "canceled" → INVALID_TRANSITION
+ *   "expired"  → INVALID_TRANSITION
+ *
+ * Invariants enforced inside a single atomic transaction:
  *   - Idempotent: same Claim already confirmed returns existing Sale (§2.6).
- *   - Uniqueness: a different Claim that would create a second active Sale
- *     for the same (eventId, lotId) is rejected (§2.4).
- *   - Replacement-owner path is blocked when prior Sale is not voided;
- *     callers must void the prior Sale via the corrective workflow (§2.7)
- *     before re-confirming. This service cannot void Sales.
+ *   - Uniqueness: a different active Sale for (eventId, lotId) is rejected (§2.4).
+ *   - Sale insert + Claim.saleId update + Invoice upsert are atomic.
  *
  * LIMITATION (documented per spec task §7):
- *   A void/correction model (ADR-3/PR-G) does not yet exist.
- *   Until it is merged, the replacement-owner path remains blocked:
- *   confirmClaim will throw ACTIVE_SALE_EXISTS if a non-voided Sale
- *   for the same (eventId, lotId) exists from a different Claim.
- *
- * @param saleInput  Required fields to create the Sale row (mirrors
- *   existing SaleInvoice flow; caller provides lot description,
- *   hammer amount, clerk initials, etc.).
+ *   Replacement-owner path is blocked until ADR-3/PR-G provides a void model.
  */
 export interface ConfirmClaimSaleInput {
   displayLotNumber: string;
@@ -203,11 +222,11 @@ export async function confirmClaim(
   claimId: number,
   saleInput: ConfirmClaimSaleInput
 ): Promise<ConfirmClaimResult> {
-  const claimsTable = (db as unknown as { claims: import("dexie").Table<Claim> }).claims;
+  const ct = claimsTable(db);
 
   const claim = await getClaimOrThrow(db, claimId);
 
-  // --- Backup-before-promotion guard (ADR-001 §2.5)
+  // --- Status gate: only primary/promoted may be confirmed
   if (claim.status === "backup") {
     throw new ClaimDomainError(
       "BACKUP_NOT_PROMOTED",
@@ -215,8 +234,15 @@ export async function confirmClaim(
         "Call promoteClaim before confirmClaim."
     );
   }
+  if (claim.status === "canceled" || claim.status === "expired") {
+    throw new ClaimDomainError(
+      "INVALID_TRANSITION",
+      `Cannot confirm Claim ${claimId}: status is ${claim.status}.`
+    );
+  }
 
-  // --- Idempotency (ADR-001 §2.6): same Claim already confirmed
+  // --- Idempotency (§2.6): same Claim already confirmed — checked outside
+  //     the transaction so we can return early without acquiring locks.
   if (claim.saleId != null) {
     const existing = await db.sales.get(claim.saleId);
     if (existing) {
@@ -224,37 +250,11 @@ export async function confirmClaim(
     }
   }
 
-  // --- Uniqueness (ADR-001 §2.4): reject a second active confirmed Sale
-  //     for the same (eventId, lotId) from a DIFFERENT Claim.
-  const existingSales = await db.sales
-    .where("eventId")
-    .equals(claim.eventId)
-    .filter(
-      (s: Sale) =>
-        s.lotId === claim.lotId &&
-        (s as Sale & { status?: string }).status !== "voided"
-    )
-    .toArray();
-
-  if (existingSales.length > 0) {
-    // Check whether it belongs to THIS claim (edge: saleId was just null but Sale exists)
-    const thisClaim = existingSales.find(
-      (s) => s.id != null && s.id === claim.saleId
-    );
-    if (!thisClaim) {
-      throw new ClaimDomainError(
-        "ACTIVE_SALE_EXISTS",
-        `An active Sale already exists for lot ${claim.lotId} in event ${claim.eventId}. ` +
-          "Void the prior Sale before confirming a replacement owner (ADR-001 §2.7, PR-G).\n" +
-          "LIMITATION: The void/correction model (ADR-3/PR-G) is not yet implemented. " +
-          "Replacement-owner confirmation is blocked until that PR merges."
-      );
-    }
-  }
-
-  // --- Create the Sale using existing Sale shape (no new statuses invented)
+  // --- Atomic block: uniqueness check + Sale insert + Claim link + Invoice
+  //     All tables used by upsertInvoiceForBidder (events, sales, invoices)
+  //     are declared here so Dexie reuses this transaction for nested opens.
   const now = new Date();
-  const newSale: Omit<Sale, "id"> = {
+  const newSaleRow: Omit<Sale, "id"> = {
     eventId: claim.eventId,
     lotId: claim.lotId,
     bidderId: claim.bidderId,
@@ -269,27 +269,70 @@ export async function confirmClaim(
     createdAt: now,
   };
 
-  let saleId!: number;
+  let resultSale!: Sale;
+  let wasIdempotent = false;
+
   await db.transaction(
     "rw",
-    [db.sales, (db as unknown as { claims: import("dexie").Table<Claim> }).claims],
+    [db.events, db.sales, db.invoices, ct],
     async () => {
-      saleId = (await db.sales.add(newSale)) as number;
-      await claimsTable.update(claimId, {
-        saleId,
-        status: claim.status === "promoted" ? "promoted" : "primary",
-        updatedAt: now,
-      });
+      // Re-read claim inside transaction to guard against concurrent write
+      const freshClaim = await ct.get(claimId);
+      if (!freshClaim) {
+        throw new ClaimDomainError("CLAIM_NOT_FOUND", `Claim ${claimId} not found`);
+      }
+
+      // Idempotency re-check inside transaction
+      if (freshClaim.saleId != null) {
+        const existingSale = await db.sales.get(freshClaim.saleId);
+        if (existingSale) {
+          resultSale = existingSale;
+          wasIdempotent = true;
+          return;
+        }
+      }
+
+      // Uniqueness check (DR-3): inside transaction so check + insert are atomic
+      const existingSales = await db.sales
+        .where("eventId")
+        .equals(claim.eventId)
+        .filter(
+          (s: Sale) =>
+            s.lotId === claim.lotId &&
+            (s as Sale & { status?: string }).status !== "voided"
+        )
+        .toArray();
+
+      if (existingSales.length > 0) {
+        const thisClaim = existingSales.find(
+          (s) => s.id != null && s.id === freshClaim.saleId
+        );
+        if (!thisClaim) {
+          throw new ClaimDomainError(
+            "ACTIVE_SALE_EXISTS",
+            `An active Sale already exists for lot ${claim.lotId} in event ${claim.eventId}. ` +
+              "Void the prior Sale before confirming a replacement owner (ADR-001 §2.7, PR-G).\n" +
+              "LIMITATION: The void/correction model (ADR-3/PR-G) is not yet implemented. " +
+              "Replacement-owner confirmation is blocked until that PR merges."
+          );
+        }
+      }
+
+      // Create Sale
+      const saleId = (await db.sales.add(newSaleRow)) as number;
+
+      // Link Claim → Sale
+      await ct.update(claimId, { saleId, updatedAt: now });
+
+      // Invoice upsert (inside transaction — Dexie reuses parent tx)
+      const event = await db.events.get(claim.eventId);
+      if (event) {
+        await upsertInvoiceForBidder(db, event, claim.bidderId);
+      }
+
+      resultSale = (await db.sales.get(saleId))!;
     }
   );
 
-  const sale = (await db.sales.get(saleId))!;
-
-  // --- Allocate to Invoice via existing upsertInvoiceForBidder (DR-5)
-  const event = await db.events.get(claim.eventId);
-  if (event) {
-    await upsertInvoiceForBidder(db, event, claim.bidderId);
-  }
-
-  return { sale, wasIdempotent: false };
+  return { sale: resultSale, wasIdempotent };
 }

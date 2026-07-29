@@ -305,7 +305,7 @@ export function parseEventExportPayload(raw: unknown): EventExportPayload {
   const consignors = Array.isArray(o.consignors)
     ? o.consignors
     : ([] as EventExportPayload["consignors"]);
-  // claims is optional; v1–v6 exports omit it — default to empty array.
+  // claims is optional; v1–v6 exports omit it — default to undefined (treated as empty).
   const claims = Array.isArray(o.claims)
     ? (o.claims as ClaimExportShape[])
     : undefined;
@@ -671,14 +671,20 @@ async function insertChildrenForEvent(
   // -------------------------------------------------------------------------
   // Claims (v7+): remap bidderId, lotId, and saleId to new local IDs.
   // Old exports (v1–v6) have no claims array; skip gracefully.
-  // A missing bidder or lot reference is a visible import error per ADR-001 §6.2.
+  //
+  // Reference integrity rules (ADR-001 §6.2):
+  //   - Missing bidder  → visible import error
+  //   - Missing lot     → visible import error
+  //   - legacySaleId non-null but no mapping → visible import error
+  //     (do NOT silently set saleId=null; a confirmed Claim must link
+  //     to its Sale or the import is corrupt)
   // -------------------------------------------------------------------------
   let claimCount = 0;
   const claimRows = payload.claims ?? [];
   for (let ci = 0; ci < claimRows.length; ci++) {
     const c = claimRows[ci];
     const {
-      legacyId,
+      legacyId: _cid,
       legacyBidderId,
       legacyLotId,
       legacySaleId,
@@ -705,15 +711,27 @@ async function insertChildrenForEvent(
       );
     }
 
-    const newSaleId =
-      legacySaleId != null ? saleLegacyMap.get(legacySaleId) : null;
+    // legacySaleId non-null means this Claim was confirmed; the Sale must
+    // have been exported and imported, so the mapping MUST exist.
+    // Silently falling back to null would hide data corruption.
+    let newSaleId: number | null = null;
+    if (legacySaleId != null) {
+      const mapped = saleLegacyMap.get(legacySaleId);
+      if (mapped == null) {
+        throw new Error(
+          `Claim[${ci}] references Sale legacyId=${legacySaleId} which was not found ` +
+            "in the imported sales — export may be incomplete or corrupt."
+        );
+      }
+      newSaleId = mapped;
+    }
 
     await db.claims.add({
       ...rest,
       eventId,
       bidderId: newBidderId,
       lotId: newLotId,
-      saleId: newSaleId ?? null,
+      saleId: newSaleId,
       createdAt: parseDate(createdAt),
       updatedAt: parseDate(updatedAt),
     });

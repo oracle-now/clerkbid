@@ -4,7 +4,7 @@
  * Uses fake-indexeddb so Dexie runs in Node/Vitest without a browser.
  * Each test gets a fresh in-memory DB.
  */
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect } from "vitest";
 import "fake-indexeddb/auto";
 import Dexie from "dexie";
 import { AuctionDB } from "@/lib/db";
@@ -55,11 +55,11 @@ async function seedEvent(db: AuctionDB): Promise<AuctionEvent & { id: number }> 
   return (await db.events.get(id))! as AuctionEvent & { id: number };
 }
 
-async function seedBidder(db: AuctionDB, eventId: number) {
+async function seedBidder(db: AuctionDB, eventId: number, paddleNumber = 1) {
   const now = new Date();
   return (await db.bidders.add({
     eventId,
-    paddleNumber: 1,
+    paddleNumber,
     firstName: "Alice",
     lastName: "Smith",
     createdAt: now,
@@ -90,6 +90,10 @@ const saleInputFor = (lotDisplay = "1", paddleNum = 1) => ({
   amount: 100,
   clerkInitials: "JQ",
 });
+
+type ClaimsTable = Dexie.Table<Claim>;
+const ct = (db: AuctionDB) =>
+  (db as unknown as { claims: ClaimsTable }).claims;
 
 // ---------------------------------------------------------------------------
 // 1. Primary creation — no Sale or Invoice created
@@ -157,7 +161,7 @@ describe("promoteClaim", () => {
     });
     await promoteClaim(db, claim.id!);
 
-    const updated = await (db as unknown as { claims: Dexie.Table<Claim> }).claims.get(claim.id!);
+    const updated = await ct(db).get(claim.id!);
     expect(updated!.status).toBe("promoted");
     expect(await db.sales.count()).toBe(0);
   });
@@ -254,10 +258,57 @@ describe("confirmClaim", () => {
     expect((caught as ClaimDomainError).code).toBe("BACKUP_NOT_PROMOTED");
   });
 
+  it("rejects confirming a canceled Claim", async () => {
+    const db = freshDb();
+    const event = await seedEvent(db);
+    const bidderId = await seedBidder(db, event.id);
+    const lotId = await seedLot(db, event.id);
+
+    const claim = await createPrimary(db, { eventId: event.id, lotId, bidderId });
+    await cancelClaim(db, claim.id!);
+
+    let caught: unknown;
+    try {
+      await confirmClaim(db, claim.id!, saleInputFor());
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ClaimDomainError);
+    expect((caught as ClaimDomainError).code).toBe("INVALID_TRANSITION");
+    expect(await db.sales.count()).toBe(0);
+    expect(await db.invoices.count()).toBe(0);
+  });
+
+  it("rejects confirming an expired Claim", async () => {
+    const db = freshDb();
+    const event = await seedEvent(db);
+    const bidderId = await seedBidder(db, event.id);
+    const lotId = await seedLot(db, event.id);
+
+    const claim = await createBackup(db, {
+      eventId: event.id,
+      lotId,
+      bidderId,
+      position: 1,
+    });
+    await expireClaim(db, claim.id!);
+
+    let caught: unknown;
+    try {
+      await confirmClaim(db, claim.id!, saleInputFor());
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ClaimDomainError);
+    expect((caught as ClaimDomainError).code).toBe("INVALID_TRANSITION");
+    expect(await db.sales.count()).toBe(0);
+    expect(await db.invoices.count()).toBe(0);
+  });
+
   it("rejects second active owner for the same (eventId, lotId)", async () => {
     const db = freshDb();
     const event = await seedEvent(db);
-    const bidder1 = await seedBidder(db, event.id);
+    const bidder1 = await seedBidder(db, event.id, 1);
     const now = new Date();
     const bidder2 = (await db.bidders.add({
       eventId: event.id,
@@ -287,6 +338,44 @@ describe("confirmClaim", () => {
 
     expect(await db.sales.count()).toBe(1);
   });
+
+  // -------------------------------------------------------------------------
+  // Atomicity rollback test
+  // Simulate a failure after Sale insert (during Invoice upsert) by patching
+  // the event row to have a null eventId so upsertInvoiceForBidder throws.
+  // Dexie's transaction abort must roll back Sale and Claim.saleId.
+  // -------------------------------------------------------------------------
+  it("rolls back Sale and Claim.saleId when Invoice allocation fails", async () => {
+    const db = freshDb();
+    const event = await seedEvent(db);
+    const bidderId = await seedBidder(db, event.id);
+    const lotId = await seedLot(db, event.id);
+    const claim = await createPrimary(db, { eventId: event.id, lotId, bidderId });
+
+    // Delete the event row so upsertInvoiceForBidder's event lookup returns
+    // undefined; the service will skip invoice creation in that case.
+    // Instead, we monkey-patch db.invoices.add to throw inside the transaction.
+    const origAdd = db.invoices.add.bind(db.invoices);
+    (db.invoices as unknown as Record<string, unknown>).add = () => {
+      throw new Error("Simulated invoice failure");
+    };
+
+    let threw = false;
+    try {
+      await confirmClaim(db, claim.id!, saleInputFor());
+    } catch {
+      threw = true;
+    } finally {
+      // Restore
+      (db.invoices as unknown as Record<string, unknown>).add = origAdd;
+    }
+
+    expect(threw).toBe(true);
+    expect(await db.sales.count()).toBe(0);
+    expect(await db.invoices.count()).toBe(0);
+    const refreshed = await ct(db).get(claim.id!);
+    expect(refreshed!.saleId).toBeNull();
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -303,7 +392,7 @@ describe("cancelClaim / expireClaim", () => {
     const claim = await createPrimary(db, { eventId: event.id, lotId, bidderId });
     await cancelClaim(db, claim.id!);
 
-    const updated = await (db as unknown as { claims: Dexie.Table<Claim> }).claims.get(claim.id!);
+    const updated = await ct(db).get(claim.id!);
     expect(updated!.status).toBe("canceled");
     expect(await db.sales.count()).toBe(0);
   });
@@ -322,9 +411,52 @@ describe("cancelClaim / expireClaim", () => {
     });
     await expireClaim(db, claim.id!);
 
-    const updated = await (db as unknown as { claims: Dexie.Table<Claim> }).claims.get(claim.id!);
+    const updated = await ct(db).get(claim.id!);
     expect(updated!.status).toBe("expired");
     expect(await db.sales.count()).toBe(0);
+  });
+
+  it("cancelClaim on a confirmed Claim throws INVALID_TRANSITION", async () => {
+    const db = freshDb();
+    const event = await seedEvent(db);
+    const bidderId = await seedBidder(db, event.id);
+    const lotId = await seedLot(db, event.id);
+
+    const claim = await createPrimary(db, { eventId: event.id, lotId, bidderId });
+    await confirmClaim(db, claim.id!, saleInputFor());
+
+    let caught: unknown;
+    try {
+      await cancelClaim(db, claim.id!);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ClaimDomainError);
+    expect((caught as ClaimDomainError).code).toBe("INVALID_TRANSITION");
+    // Sale and Invoice remain untouched
+    expect(await db.sales.count()).toBe(1);
+    expect(await db.invoices.count()).toBe(1);
+  });
+
+  it("expireClaim on a confirmed Claim throws INVALID_TRANSITION", async () => {
+    const db = freshDb();
+    const event = await seedEvent(db);
+    const bidderId = await seedBidder(db, event.id);
+    const lotId = await seedLot(db, event.id);
+
+    const claim = await createPrimary(db, { eventId: event.id, lotId, bidderId });
+    await confirmClaim(db, claim.id!, saleInputFor());
+
+    let caught: unknown;
+    try {
+      await expireClaim(db, claim.id!);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(ClaimDomainError);
+    expect((caught as ClaimDomainError).code).toBe("INVALID_TRANSITION");
+    expect(await db.sales.count()).toBe(1);
+    expect(await db.invoices.count()).toBe(1);
   });
 });
 
@@ -336,7 +468,7 @@ describe("queue-order preservation", () => {
   it("preserves backup position through export/import round trip", async () => {
     const db = freshDb();
     const event = await seedEvent(db);
-    const b1 = await seedBidder(db, event.id);
+    const b1 = await seedBidder(db, event.id, 1);
     const now = new Date();
     const b2 = (await db.bidders.add({
       eventId: event.id,
@@ -364,7 +496,7 @@ describe("queue-order preservation", () => {
     const db2 = freshDb();
     await importEventFromPayload(db2, payload);
 
-    const claims = await (db2 as unknown as { claims: Dexie.Table<Claim> }).claims
+    const claims = await ct(db2)
       .where("status")
       .equals("backup")
       .toArray();
@@ -378,7 +510,7 @@ describe("queue-order preservation", () => {
 // ---------------------------------------------------------------------------
 
 describe("dataPorter Claim round trip", () => {
-  it("exports and re-imports a Claim with remapped bidderId and lotId", async () => {
+  it("exports and re-imports a Claim with all references remapped", async () => {
     const db = freshDb();
     const event = await seedEvent(db);
     const bidderId = await seedBidder(db, event.id);
@@ -394,13 +526,42 @@ describe("dataPorter Claim round trip", () => {
     const db2 = freshDb();
     await importEventFromPayload(db2, payload);
 
-    const claims = await (db2 as unknown as { claims: Dexie.Table<Claim> }).claims.toArray();
+    const claims = await ct(db2).toArray();
     expect(claims).toHaveLength(1);
-    // References were remapped to new IDs in db2
-    const newEvents = await db2.events.toArray();
-    expect(newEvents).toHaveLength(1);
-    const newBidders = await db2.bidders.toArray();
-    expect(claims[0].bidderId).toBe(newBidders[0].id);
+
+    const newEvent = (await db2.events.toArray())[0]!;
+    const newBidder = (await db2.bidders.toArray())[0]!;
+    const newLot = (await db2.lots.toArray())[0]!;
+
+    expect(claims[0].eventId).toBe(newEvent.id);
+    expect(claims[0].bidderId).toBe(newBidder.id);
+    expect(claims[0].lotId).toBe(newLot.id);
+    // Unconfirmed claim: saleId should be null
+    expect(claims[0].saleId).toBeNull();
+  });
+
+  it("exports and re-imports a confirmed Claim with remapped saleId", async () => {
+    const db = freshDb();
+    const event = await seedEvent(db);
+    const bidderId = await seedBidder(db, event.id);
+    const lotId = await seedLot(db, event.id);
+
+    const claim = await createPrimary(db, { eventId: event.id, lotId, bidderId });
+    const { sale } = await confirmClaim(db, claim.id!, saleInputFor());
+
+    const payload = await buildEventExport(db, event.id);
+    const db2 = freshDb();
+    await importEventFromPayload(db2, payload);
+
+    const importedClaims = await ct(db2).toArray();
+    expect(importedClaims).toHaveLength(1);
+
+    const importedSales = await db2.sales.toArray();
+    expect(importedSales).toHaveLength(1);
+
+    // saleId must be remapped to the new Sale id in db2
+    expect(importedClaims[0].saleId).toBe(importedSales[0].id);
+    expect(importedClaims[0].saleId).not.toBe(sale.id); // different DB instance
   });
 
   it("old export (no claims array) imports without error", async () => {
@@ -409,7 +570,6 @@ describe("dataPorter Claim round trip", () => {
     await seedBidder(db, event.id);
     await seedLot(db, event.id);
 
-    // Manually build a v6 payload (no claims)
     const payload = await buildEventExport(db, event.id);
     const oldPayload = { ...payload, exportVersion: 6, claims: undefined };
 
@@ -426,7 +586,6 @@ describe("dataPorter Claim round trip", () => {
     await createPrimary(db, { eventId: event.id, lotId, bidderId });
     const payload = await buildEventExport(db, event.id);
 
-    // Corrupt: point the claim at a legacyBidderId that doesn't exist
     const corrupt = {
       ...payload,
       claims: payload.claims!.map((c) => ({ ...c, legacyBidderId: 99999 })),
@@ -434,5 +593,47 @@ describe("dataPorter Claim round trip", () => {
 
     const db2 = freshDb();
     await expect(importEventFromPayload(db2, corrupt as never)).rejects.toThrow();
+  });
+
+  it("rejects import when Claim references a missing lot", async () => {
+    const db = freshDb();
+    const event = await seedEvent(db);
+    const bidderId = await seedBidder(db, event.id);
+    const lotId = await seedLot(db, event.id);
+
+    await createPrimary(db, { eventId: event.id, lotId, bidderId });
+    const payload = await buildEventExport(db, event.id);
+
+    const corrupt = {
+      ...payload,
+      claims: payload.claims!.map((c) => ({ ...c, legacyLotId: 99999 })),
+    };
+
+    const db2 = freshDb();
+    await expect(importEventFromPayload(db2, corrupt as never)).rejects.toThrow(
+      /unknown lot/
+    );
+  });
+
+  it("rejects import when confirmed Claim references a missing Sale", async () => {
+    const db = freshDb();
+    const event = await seedEvent(db);
+    const bidderId = await seedBidder(db, event.id);
+    const lotId = await seedLot(db, event.id);
+
+    const claim = await createPrimary(db, { eventId: event.id, lotId, bidderId });
+    await confirmClaim(db, claim.id!, saleInputFor());
+    const payload = await buildEventExport(db, event.id);
+
+    // Corrupt: point saleId to a non-existent legacy sale id
+    const corrupt = {
+      ...payload,
+      claims: payload.claims!.map((c) => ({ ...c, legacySaleId: 99999 })),
+    };
+
+    const db2 = freshDb();
+    await expect(importEventFromPayload(db2, corrupt as never)).rejects.toThrow(
+      /Sale legacyId=99999/
+    );
   });
 });
