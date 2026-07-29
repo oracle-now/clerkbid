@@ -20,6 +20,7 @@ import {
   LogOut,
   X,
   ListChecks,
+  LayoutGrid,
 } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { isSuperAdminUserIdAndEmail } from "@/lib/auth/superAdmin";
@@ -30,6 +31,7 @@ import { EventSwitcher } from "./EventSwitcher";
 
 const nav = [
   { href: "/dashboard/", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/workspace/", label: "Sale workspace", icon: LayoutGrid },
   { href: "/events/", label: "Sales", icon: CalendarDays },
   { href: "/bidders/", label: "Buyers", icon: Users },
   { href: "/consignors/", label: "Consignors", icon: Package },
