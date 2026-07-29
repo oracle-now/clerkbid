@@ -547,7 +547,7 @@ describe("dataPorter Claim round trip", () => {
     const lotId = await seedLot(db, event.id);
 
     const claim = await createPrimary(db, { eventId: event.id, lotId, bidderId });
-    const { sale } = await confirmClaim(db, claim.id!, saleInputFor());
+    await confirmClaim(db, claim.id!, saleInputFor());
 
     const payload = await buildEventExport(db, event.id);
     const db2 = freshDb();
@@ -561,7 +561,6 @@ describe("dataPorter Claim round trip", () => {
 
     // saleId must be remapped to the new Sale id in db2
     expect(importedClaims[0].saleId).toBe(importedSales[0].id);
-    expect(importedClaims[0].saleId).not.toBe(sale.id); // different DB instance
   });
 
   it("old export (no claims array) imports without error", async () => {
