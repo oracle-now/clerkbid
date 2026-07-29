@@ -19,6 +19,7 @@ import {
   Shield,
   LogOut,
   X,
+  Bookmark,
 } from "lucide-react";
 import { signOut, useSession } from "next-auth/react";
 import { isSuperAdminUserIdAndEmail } from "@/lib/auth/superAdmin";
@@ -34,6 +35,7 @@ const nav = [
   { href: "/consignors/", label: "Consignors", icon: Package },
   { href: "/lots/", label: "Items", icon: ClipboardList },
   { href: "/clerking/", label: "Sale clerking", icon: Gavel },
+  { href: "/claims/", label: "Claim Desk", icon: Bookmark },
   { href: "/invoices/", label: "Buyer Bundles", icon: FileText },
   { href: "/reports/", label: "Reports", icon: BarChart3 },
   { href: "/help/", label: "Help", icon: CircleHelp },
