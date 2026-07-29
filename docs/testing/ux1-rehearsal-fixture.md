@@ -1,100 +1,165 @@
-# UX-1 Rehearsal Fixture — Seller Journey Shell
+# UX-1 Evidence Protocol — Seller Workspace Navigation
 
-**Class:** Founder-Class UX-1 · **Budget:** 10 min · **Viewport:** 375 px  
-**Purpose:** Verify a first-time seller navigates Set up → Sell → Pack without documentation.
+**Class:** Founder-Class UX-1 · **Budget:** 15 min · **Viewport:** 375 px  
+**Purpose:** Measure whether a first-time seller can navigate the three workspace areas
+(Set up / Sell / Buyer Bundles) and resume after interruption without documentation.
 
----
-
-## Test Data
-
-### Sale
-Facebook · **Tartan Goat Vintage — Flash Friday #12** · Status: Active
-
-### Items (5)
-1. Plaid wool blazer, size M — $28
-2. Brass candlestick pair — $15
-3. Ceramic owl figurine — $8
-4. Leather belt, tan 34 — $12
-5. Wicker fruit basket — $10
-
-### Buyers & Claims
-
-| Code | Name | Role |
-|---|---|---|
-| B-101 | Marta Zoltan | **Current** Claim on Item 1 |
-| B-202 | Devon Ashby | **1st Waiting** on Item 1; confirmed purchases: Items 3 & 4 |
-| B-303 | Priya Neel | **2nd Waiting** on Item 1 |
-
-### Buyer Bundles
-
-| Buyer | Pack-ready | Reason |
-|---|---|---|
-| B-202 Devon Ashby | ✅ Yes | Items 3 & 4 confirmed |
-| B-101 Marta Zoltan | ❌ No | Claim still active |
+> **Implementation not authorized.** This document is a study protocol only.
 
 ---
 
-## Script
+## Evidence model
 
-For each step record: **pass/fail**, hesitation notes, wrong-turn notes.
+### Recognition over recall
 
-### 1 · Select the Sale
-- **Destination:** Sale list → tap Tartan Goat Vintage — Flash Friday #12
-- **Understanding:** Seller identifies the active Sale
-- **Pass:** Selected within 30 s without prompting
+The workspace exposes Sale context and operational destinations so the seller does not
+need to remember legacy page names. Labels should carry enough meaning that a first-time
+seller can identify the correct route by reading, not by prior knowledge.
 
-### 2 · Identify the Three Phases
-- **Destination:** Sale workspace
-- **Understanding:** Seller names Set up, Sell, Pack in order
-- **Pass:** All three named unprompted within 10 s
+### Information scent
 
-### 3 · Reach Items
-- **Destination:** Items list — 5 rows visible
-- **Understanding:** Items are the things being sold
-- **Pass:** Navigates without searching for "Lots"
+Explicit labels should let sellers predict the correct destination before clicking.
+A destination that requires exploration to verify its contents has weak scent.
 
-### 4 · Reach Buyers
-- **Destination:** Buyers list — 3 rows (B-101, B-202, B-303)
-- **Understanding:** Buyers are the people bidding
-- **Pass:** Navigates without searching for "Bidders"
+### Choice grouping
 
-### 5 · Reach Claim Desk
-- **Destination:** Claim Desk — Item 1 shows Current + 1st Waiting + 2nd Waiting
-- **Understanding:** Reads "Current" and "Waiting" without confusion
-- **Pass:** Identifies Marta as Current, Devon and Priya as Waiting
+Actions are grouped by seller goal rather than shown as one flat set of equally weighted
+routes. Grouping reduces the number of competing targets a seller must evaluate per step.
 
-### 6 · Reach Manual Purchase Entry
-- **Destination:** Completed-purchase entry form
-- **Understanding:** Used to record a sale that happened outside the app
-- **Pass:** Locates entry point and states its purpose within 30 s
+### Interruption recovery
 
-### 7 · Reach Buyer Bundles
-- **Destination:** Bundles list — Devon's bundle ✅, Marta's bundle ❌
-- **Understanding:** Distinguishes pack-ready from not-ready
-- **Pass:** Identifies Devon Ashby's bundle as ready to pack
-
-### 8 · Reach Packing Destination
-- **Destination:** Devon Ashby's bundle detail (or states no destination is set)
-- **Understanding:** Knows where the bundle ships or is picked up
-- **Pass:** Reads correct destination or correctly reports none
-
-### 9 · Return to Sale Workspace
-- **Destination:** Sale workspace (same as Step 2)
-- **Understanding:** Knows they are back at the top of this Sale
-- **Pass:** Returns with ≤ 1 back-tap
-
-### 10 · State the Next Action
-- **Destination:** No navigation — verbal
-- **Understanding:** Identifies a valid next action on Item 1
-- **Pass:** States confirm Marta's sale or move up Devon within 10 s
+The selected Sale and a stable workspace route should help the seller return to the
+correct context after a distraction. Recovery speed reflects orientation clarity, not
+pure memory.
 
 ---
 
-## Success Criteria
+## Test data
 
-- [ ] Seller identifies the active Sale
-- [ ] Seller finds every core destination without documentation
-- [ ] Seller never sees "Event," "Bidder," "Lot," or "Invoice" in UX-1 copy
-- [ ] Seller explains Set up → Sell → Pack
-- [ ] Seller locates next action within 10 s
-- [ ] No horizontal scrolling at 375 px
+Use fictional data only. Do not record real buyer names, item details, prices,
+addresses, credentials, or claim phrases in results.
+
+**Sale:** Facebook · Tartan Goat Vintage — Flash Friday #12 · Status: Active
+
+**Items (5):** plaid blazer · brass candlesticks · ceramic owl · leather belt · wicker basket
+
+**Buyers:**
+
+| Code | Role |
+|---|---|
+| B-101 | Current Claim on Item 1 |
+| B-202 | 1st Waiting on Item 1; two confirmed purchases |
+| B-303 | 2nd Waiting on Item 1 |
+
+---
+
+## Tasks
+
+For each task record: first click, completion, time, hesitation (>3 s), wrong destination,
+backtrack, help request, terminology confusion, resumption time, and what the seller
+stated they expected before clicking.
+
+| # | Task | Destination | Pass condition |
+|---|---|---|---|
+| 1 | Choose or create a Sale | Sale list | Selects Tartan Goat without prompting |
+| 2 | Identify the selected Sale | Workspace header | Names the active Sale within 10 s |
+| 3 | Find Items | Items area | Reaches without searching for "Lots" |
+| 4 | Find Buyers | Buyers area | Reaches without searching for "Bidders" |
+| 5 | Find Facebook claims | Claim Desk | Reaches and reads Current + Waiting without confusion |
+| 6 | Find completed-purchase entry | Purchase entry form | Locates and states its purpose within 30 s |
+| 7 | Find Buyer Bundles | Bundles list | Reaches without confusion |
+| 8 | Return to workspace | Sale workspace | Returns with ≤ 1 back-tap |
+| 9 | Resume after short neutral interruption (60 s break) | First correct action post-return | First action correct; resumption time recorded |
+| 10 | Explain each of the three areas | Verbal | Names Set up, Sell, and Buyer Bundles and states each area's purpose |
+
+> Do not interpret hesitation alone as failure. Hesitation with a correct destination
+> is an information-scent signal, not an error.
+
+---
+
+## Measurement formulas
+
+All formulas apply to destination-navigation tasks (Tasks 1–8, 10).
+
+### First-click accuracy
+`correct first destination choices / destination tasks`
+
+### Destination time
+`time of correct destination click − time workspace became ready`
+
+### Wrong-turn rate
+`tasks containing an incorrect destination / destination tasks`
+
+### Unassisted completion
+`tasks completed without help / attempted tasks`
+
+### Backtrack rate
+`sessions containing an unexplained rapid return / workspace sessions`
+
+A rapid return is a study heuristic for potential confusion, not a proven navigation error.
+
+### Resumption time
+`first correct action after return − time of return`
+
+### UX-1 evidence score
+
+```
+score = 0.35 × completion
+      + 0.25 × unassisted_completion
+      + 0.20 × first_click_accuracy
+      − 0.10 × normalized_task_time
+      − 0.10 × normalized_wrong_turn_rate
+```
+
+- This is a project decision score, not a universal law.
+- Raw metrics must always be reported alongside it.
+- A serious ownership or data-integrity error cannot be averaged away by score.
+
+---
+
+## Initial MVP thresholds
+
+These are hypotheses to refine after Founder testing, not acceptance gates.
+
+- 100 % of sellers can identify the selected Sale
+- ≥ 80 % first-click accuracy
+- ≥ 80 % unassisted task completion
+- Median destination time < 10 s
+- ≤ 1 wrong destination per full rehearsal
+- Median interruption resumption time < 10 s
+- Zero new-copy uses of Event, Bidder, Lot, Invoice, or Clerking
+- Zero data mutations caused by workspace navigation
+
+---
+
+## Mobile check (375 px)
+
+Verify at approximately 375 px viewport width:
+
+- [ ] No horizontal overflow
+- [ ] Current Sale is visible without scrolling
+- [ ] All three areas (Set up, Sell, Buyer Bundles) are visible
+- [ ] All operational links are reachable by tap
+- [ ] Tap targets are comfortably sized
+- [ ] Focus indicator is visible
+- [ ] No desktop sidebar is required for any task
+
+---
+
+## Privacy
+
+- Use fictional test data only.
+- Do not record buyer names, item descriptions, prices, addresses, credentials,
+  or claim phrases in results.
+- Do not add telemetry implementation to this document.
+
+---
+
+## Success criteria
+
+- [ ] Sellers reach every core destination without documentation
+- [ ] No new-copy appearance of Event, Bidder, Lot, Invoice, or Clerking
+- [ ] Sellers can explain all three workspace areas
+- [ ] Resumption after interruption meets threshold
+- [ ] No horizontal overflow at 375 px
+- [ ] No data mutation from navigation
